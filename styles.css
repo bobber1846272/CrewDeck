@@ -202,3 +202,52 @@ tr.admin td { background: #FFF8F3; }
 #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: var(--ink); color: #fff; padding: 12px 18px; border-radius: 10px; font-size: 14px; opacity: 0; pointer-events: none; transition: .2s; max-width: calc(100% - 32px); }
 #toast.show { opacity: 1; transform: translateX(-50%); }
 #toast.error { background: var(--red); }
+
+/* ---------- uitbreidingen ---------- */
+.nav-sep { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #AEB5C6; padding: 14px 12px 4px; }
+.link-btn { display: inline-flex; align-items: center; gap: 6px; }
+.main.wide { max-width: none; }
+.search.soft { border: 1px solid var(--line-2); max-width: 920px; }
+.search.soft:focus-within { border: 2px solid var(--accent); }
+.icon-btn.small { width: 36px; height: 36px; }
+.btn.danger { border-color: #FDA29B; color: var(--red); background: #fff; }
+.btn.danger:hover { background: #FEF3F2; }
+.alert.warn { background: #FFFAEB; border: 1px solid #FEC84B; color: #7A2E0E; }
+.repeat { display: inline-flex; align-items: center; gap: 3px; color: var(--ink-2); font-weight: 600; }
+.chip.quick { min-height: 34px; font-size: 12px; padding: 0 10px; }
+.chip.quick:hover { border-color: var(--ink-2); }
+
+.board { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
+.col { flex: 0 0 280px; background: #ECEEF2; border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 8px; border: 2px solid transparent; min-height: 200px; }
+.col.over { border-color: var(--accent); background: var(--accent-soft); }
+.col-head { display: flex; gap: 10px; align-items: center; padding: 4px 4px 6px; }
+.col-head strong { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.col-head small { display: block; font-size: 12px; color: var(--muted); }
+.col-body { display: flex; flex-direction: column; gap: 8px; }
+.mini { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; cursor: grab; font-size: 14px; }
+.mini:hover { border-color: var(--line-2); }
+.mini.dragging { opacity: .45; }
+.col-tasks { display: flex; flex-direction: column; gap: 6px; padding: 8px 4px 2px; border-top: 1px dashed var(--line-2); margin-top: 4px; }
+.mini-task { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 13px; background: rgba(255,255,255,.6); border-radius: 8px; padding: 6px 8px; }
+.mini-task .badge { font-size: 11px; }
+
+.chart { display: flex; align-items: flex-end; gap: 4px; height: 180px; padding-top: 8px; overflow-x: auto; }
+.bar-group { flex: 1 0 14px; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; min-width: 14px; }
+.bars { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 2px; }
+.bar { width: 45%; max-width: 16px; min-height: 2px; border-radius: 3px 3px 0 0; }
+.bar.blue, .dot.blue { background: #2563EB; }
+.bar.green, .dot.green { background: #16A34A; }
+.bar-label { font-size: 10px; color: var(--muted); white-space: nowrap; height: 12px; }
+.legend-row { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-left: 8px; }
+.hbar { display: grid; grid-template-columns: 120px 1fr 32px; gap: 10px; align-items: center; font-size: 13px; padding: 6px 0; }
+.hbar-track { height: 10px; background: var(--grey-bg); border-radius: 99px; overflow: hidden; }
+.hbar-track span { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+td.pad { padding: 12px 14px; }
+
+.log-day { font-size: 12px; font-weight: 700; color: var(--muted); padding: 14px 20px 6px; text-transform: uppercase; letter-spacing: .05em; }
+.log-row { display: grid; grid-template-columns: 48px 118px 1fr auto; gap: 12px; align-items: center; padding: 8px 20px; border-top: 1px solid var(--line); font-size: 14px; }
+.log-row time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
+.log-row .badge { justify-self: start; }
+.log-text { min-width: 0; word-break: break-word; }
+@media (max-width: 640px) { .log-row { grid-template-columns: 44px 1fr; } .log-row .badge { grid-column: 2; } .log-row .log-text, .log-row > .small { grid-column: 2; } }
