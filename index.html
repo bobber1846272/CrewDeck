@@ -2,25 +2,19 @@
 <html lang="nl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
-<title>DEMO · Terugbelsysteem · TheNextGroep BV</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B1220">
+<meta name="description" content="Crewdeck: terugbelverzoeken, taken en teamwerk op één plek.">
+<title>Crewdeck</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="styles.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%2312182B'/%3E%3Cpath d='M8 6h3l1 4-2 1a8 8 0 0 0 3 3l1-2 4 1v3a2 2 0 0 1-2 2A12 12 0 0 1 6 8a2 2 0 0 1 2-2z' fill='%23FDBA74'/%3E%3C/svg%3E">
-<style>
-.demo-bar { position: sticky; top: 0; z-index: 50; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 16px; background: #FEF0C7; color: #7A2E0E; font-size: 13px; border-bottom: 1px solid #FEC84B; }
-.demo-bar strong { letter-spacing: .08em; }
-.demo-accounts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex: 1 1 400px; }
-.demo-bar button { min-height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid #FDB022; background: #FFFAEB; color: #7A2E0E; font-size: 13px; font-weight: 600; cursor: pointer; }
-.demo-bar button small { font-weight: 400; opacity: .8; }
-.demo-bar .demo-reset { background: #fff; }
-</style>
 </head>
 <body>
 <div id="app" aria-live="polite"></div>
 <div id="toast" role="status" aria-live="polite"></div>
-<script src="core.js"></script>
-<script src="demo-api.js"></script>
+<script src="config.js"></script>
+<script src="vendor/supabase.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
