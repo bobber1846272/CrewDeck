@@ -15,6 +15,8 @@ const PERM_GROUPS = [
     ['callbacks.edit_all', 'Alle verzoeken bewerken'], ['callbacks.delete', 'Verzoeken verwijderen']]],
   ['Taken', [['tasks.create', 'Taken aanmaken'], ['tasks.assign', 'Taken aan anderen geven'], ['tasks.view_all', 'Alle taken zien'],
     ['tasks.edit_all', 'Alle taken bewerken'], ['tasks.delete', 'Taken verwijderen']]],
+  ['Uren', [['hours.view_all', 'Uren van iedereen zien'], ['hours.approve', 'Uren goedkeuren'], ['hours.plan', 'Rooster plannen']]],
+  ['Kennis & documenten', [['kb.edit', 'Kennisbank bewerken'], ['docs.upload', 'Documenten uploaden'], ['docs.manage', 'Mappen en documenten beheren']]],
   ['Teamleiding', [['team.board', 'Teambord'], ['reports.view', 'Cijfers'], ['audit.view', 'Logboek']]],
   ['Beheer', [['members.manage', 'Medewerkers beheren'], ['roles.manage', 'Rollen en rechten beheren'], ['org.manage', 'Bedrijfsinstellingen']]]
 ];
@@ -30,7 +32,14 @@ const S = {
   tView: 'mine', tasks: [], tWho: 'ALL', showArchive: false, searchOpen: false, q: '', results: null,
   team: null, stats: null, statDays: 7, log: null, logUser: '', logQ: '',
   members: [], roles: null, mSel: null, mNew: false, shownCode: null, rSel: null, rNew: false,
-  F: null, T: null, edit: null, dup: null
+  F: null, T: null, edit: null, dup: null,
+  nowWeek: null, running: null, pendingCount: 0,
+  hours: null, hWeek: null, hMember: null, hKeep: false, hEdit: null,
+  roster: null, rosterWeek: null, shiftEdit: null,
+  pending: null, pOff: {}, rejectFor: null,
+  report: null, repPeriod: 'maand', repFrom: null, repTo: null,
+  kb: null, kbQ: '', kbCat: '', kbSel: null, kbArticle: null, kbEdit: null,
+  docs: null, docFolder: null, folderEdit: null, uploading: null
 };
 const can = p => S.perms.has(p);
 const same = (a, b) => a != null && b != null && String(a) === String(b);
@@ -146,8 +155,36 @@ const ICON = {
   alert: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B42318" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;margin-top:1px"><circle cx="12" cy="12" r="10"/><path d="M12 7v6M12 16.5v.5"/></svg>',
   warn: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#B54708" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;margin-top:1px"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.5"/></svg>',
   check: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#067647" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><path d="M5 12l5 5L20 7"/></svg>',
+  left: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
+  right: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
+  chev: '<svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
+  download: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+  upload: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></svg>',
+  pin: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px"><path d="M12 17v5M8 3h8l-1 6 3 4H6l3-4z"/></svg>',
+  file: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>',
+  folder: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   tick: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5EEAD4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>'
 };
+const NI = (() => {
+  const i = d => '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+  return {
+    overzicht: i('<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
+    terugbellen: i('<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>'),
+    taken: i('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m8 12 3 3 5-6"/>'),
+    uren: i('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+    rooster: i('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
+    goedkeuren: i('<path d="M20 6 9 17l-5-5"/>'),
+    urenoverzicht: i('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+    kennisbank: i('<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/><path d="M9 7h6"/>'),
+    documenten: i('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
+    team: i('<rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="11" rx="1.5"/><rect x="17" y="4" width="4" height="7" rx="1.5"/>'),
+    cijfers: i('<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/>'),
+    logboek: i('<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>'),
+    mensen: i('<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M16 4a4 4 0 0 1 0 8M22 21a6 6 0 0 0-4-5.6"/>'),
+    rollen: i('<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/>'),
+    instellingen: i('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>')
+  };
+})();
 const LOGO = size => '<span class="logo"><svg width="' + size + '" height="' + size + '" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#15233A"/><rect x="14" y="16" width="36" height="8" rx="4" fill="#2DD4BF"/><rect x="14" y="28" width="28" height="8" rx="4" fill="#5EEAD4" opacity=".85"/><rect x="14" y="40" width="20" height="8" rx="4" fill="#99F6E4" opacity=".7"/></svg>Crewdeck</span>';
 
 // ---------- meldingen ----------
@@ -180,8 +217,9 @@ function updateTitle() {
 }
 
 // ---------- routes ----------
-const ROUTES = ['overzicht', 'terugbellen', 'verzoek', 'taken', 'taak', 'team', 'cijfers', 'logboek', 'mensen', 'rollen', 'instellingen', 'login', 'registreren'];
-const ROUTE_PERM = { team: 'team.board', cijfers: 'reports.view', logboek: 'audit.view', instellingen: null,
+const ROUTES = ['overzicht', 'terugbellen', 'verzoek', 'taken', 'taak', 'uren', 'rooster', 'goedkeuren', 'urenoverzicht', 'kennisbank', 'documenten',
+  'team', 'cijfers', 'logboek', 'mensen', 'rollen', 'instellingen', 'login', 'registreren'];
+const ROUTE_PERM = { team: 'team.board', cijfers: 'reports.view', logboek: 'audit.view', instellingen: null, goedkeuren: 'hours.approve', urenoverzicht: 'hours.view_all',
   mensen: ['members.manage', 'roles.manage'], rollen: ['members.manage', 'roles.manage'] };
 function route() { const h = location.hash.replace(/^#\/?/, ''); return ROUTES.includes(h) ? h : (S.me ? 'overzicht' : 'login'); }
 function go(r) { if (location.hash === '#/' + r) onRoute(); else location.hash = '#/' + r; }
@@ -201,6 +239,11 @@ async function onRoute() {
   }
   if (r === 'login' || r === 'registreren') { go('overzicht'); return; }
   if (!allowed(r)) { go('overzicht'); return; }
+  if (r === 'uren' && !S.hKeep) { S.hMember = null; }
+  S.hKeep = false;
+  if (r !== 'uren') S.hEdit = null;
+  if (r !== 'rooster') S.shiftEdit = null;
+  if (r !== 'documenten') S.folderEdit = null;
   try {
     if (r === 'verzoek' || r === 'taak') {
       await loadColleagues();
@@ -239,10 +282,18 @@ async function loadRoute() {
   if (r === 'cijfers') jobs.push(rpc('cd_stats', { p_days: S.statDays }).then(d => { S.stats = d; }));
   if (r === 'logboek') jobs.push(loadLog(), loadColleagues());
   if (r === 'mensen' || r === 'rollen') jobs.push(loadPeople());
+  if (r === 'uren') jobs.push(loadHours());
+  if (r === 'rooster') jobs.push(rpc('cd_roster', { p_week: S.rosterWeek || ymd(new Date()) }).then(d => { S.roster = d; S.rosterWeek = d.weekStart; }));
+  if (r === 'goedkeuren') jobs.push(rpc('cd_hours_pending').then(d => { S.pending = d; }));
+  if (r === 'urenoverzicht') jobs.push(loadReport());
+  if (r === 'kennisbank') jobs.push(loadKb());
+  if (r === 'documenten') jobs.push(loadDocs());
   await Promise.all(jobs);
 }
 async function loadCounts() {
-  const [a, b, c] = await Promise.all([rpc('cd_callbacks', { p_scope: 'mine' }), rpc('cd_callbacks', { p_scope: 'pool' }), rpc('cd_tasks', { p_scope: 'mine' })]);
+  const [a, b, c, w, p] = await Promise.all([rpc('cd_callbacks', { p_scope: 'mine' }), rpc('cd_callbacks', { p_scope: 'pool' }), rpc('cd_tasks', { p_scope: 'mine' }),
+    rpc('cd_hours_week', { p_member: null, p_week: null }), can('hours.approve') ? rpc('cd_hours_pending') : Promise.resolve([])]);
+  S.nowWeek = w; S.running = w.running; S.pendingCount = p.length;
   const openTasks = c.filter(t => !t.done && !t.mineDone && !t.archived);
   S.myCbs = a; S.poolCbs = b; S.myTasks = c;
   S.counts = { mine: a.length, pool: b.length, tasks: openTasks.length };
@@ -282,8 +333,9 @@ function render() {
     return;
   }
   const views = { overzicht: viewHome, terugbellen: viewCallbacks, verzoek: viewCallbackForm, taken: viewTasks, taak: viewTaskForm, team: viewTeam,
-    cijfers: viewStats, logboek: viewLog, mensen: viewMembers, rollen: viewRoles, instellingen: viewSettings };
-  $app.innerHTML = '<div class="shell">' + viewNav(r) + '<main class="main' + (r === 'team' ? ' wide' : '') + '" id="main">' + (views[r] || viewHome)() + '</main></div>';
+    cijfers: viewStats, logboek: viewLog, mensen: viewMembers, rollen: viewRoles, instellingen: viewSettings,
+    uren: viewHours, rooster: viewRoster, goedkeuren: viewApprove, urenoverzicht: viewReport, kennisbank: viewKb, documenten: viewDocs };
+  $app.innerHTML = '<div class="shell">' + viewNav(r) + '<main class="main' + (r === 'team' || r === 'rooster' ? ' wide' : '') + '" id="main">' + (views[r] || viewHome)() + '</main></div>';
   updateTitle();
 }
 function renderKeepFocus() {
@@ -299,7 +351,7 @@ function brandPanel(title, sub) {
     '<div>' + LOGO(36) + '</div>' +
     '<div><h1>' + title + '</h1><p>' + sub + '</p>' +
     '<ul class="feature-list">' +
-      ['Terugbelverzoeken die nooit meer blijven liggen', 'Taken voor één persoon of het hele team', 'Rollen en rechten tot op detail', 'Teambord, cijfers en een volledig logboek']
+      ['Terugbelverzoeken en taken op één plek', 'Uren, in- en uitklokken en roosters', 'Kennisbank en documenten met rechten per map', 'Rollen, teambord, cijfers en een volledig logboek']
         .map(t => '<li>' + ICON.tick + '<span>' + t + '</span></li>').join('') + '</ul></div>' +
     '<div class="spark"><span>Een product van <strong>Spark Apps</strong></span></div></section>';
 }
@@ -339,24 +391,42 @@ function viewRegister() {
   return '<div class="login">' + brandPanel('Begin vandaag met Crewdeck.', 'In één minuut staat je bedrijf klaar. Daarna voeg je je team toe.') + '<section class="login-main">' + form + '</section></div>';
 }
 
-// ----- navigatie -----
+// ----- navigatie (groepen die je kunt in- en uitklappen) -----
+function navGroups() {
+  const G = [
+    { id: 'werk', label: 'Werk', items: [['overzicht', 'Overzicht'], ['terugbellen', 'Terugbellen', S.counts.mine], ['taken', 'Taken', S.counts.tasks]] },
+    { id: 'uren', label: 'Uren', items: [['uren', 'Mijn uren', 0, S.running ? 'live' : ''], ['rooster', 'Rooster'],
+      can('hours.approve') ? ['goedkeuren', 'Goedkeuren', S.pendingCount] : null, can('hours.view_all') ? ['urenoverzicht', 'Urenoverzicht'] : null] },
+    { id: 'kennis', label: 'Kennis', items: [['kennisbank', 'Kennisbank'], ['documenten', 'Documenten']] },
+    { id: 'leiding', label: 'Teamleiding', items: [can('team.board') ? ['team', 'Teambord'] : null, can('reports.view') ? ['cijfers', 'Cijfers'] : null, can('audit.view') ? ['logboek', 'Logboek'] : null] },
+    { id: 'beheer', label: 'Beheer', items: [can('members.manage') || can('roles.manage') ? ['mensen', 'Mensen'] : null,
+      can('members.manage') || can('roles.manage') ? ['rollen', 'Rollen & rechten'] : null, ['instellingen', 'Instellingen']] }
+  ];
+  G.forEach(g => { g.items = g.items.filter(Boolean); });
+  return G.filter(g => g.items.length);
+}
 function viewNav(r) {
-  const active = to => r === to || (to === 'terugbellen' && r === 'verzoek') || (to === 'taken' && r === 'taak');
-  const link = (to, label, count) => '<a href="#/' + to + '" class="' + (active(to) ? 'active' : '') + '"' + (active(to) ? ' aria-current="page"' : '') + '><span>' + label + '</span>' +
-    (count ? '<span class="nav-count">' + count + '</span>' : '') + '</a>';
-  const soon = label => '<a class="soon" aria-disabled="true"><span>' + label + '</span><span class="soon-tag">Binnenkort</span></a>';
-  const team = can('team.board') || can('reports.view') || can('audit.view');
-  const beheer = can('members.manage') || can('roles.manage');
+  const cur = r === 'verzoek' ? 'terugbellen' : r === 'taak' ? 'taken' : r;
+  const closed = prefs.navClosed || {};
+  const link = ([to, label, count, flag]) => '<a href="#/' + to + '" class="' + (cur === to ? 'active' : '') + '"' + (cur === to ? ' aria-current="page"' : '') + '>' +
+    '<span class="nav-label">' + NI[to] + '<span>' + esc(label) + '</span></span>' +
+    (flag === 'live' ? '<span class="live-dot" title="Je bent ingeklokt"></span>' : count ? '<span class="nav-count">' + count + '</span>' : '') + '</a>';
+  const groups = navGroups().map(g => {
+    const hasActive = g.items.some(i => i[0] === cur);
+    const open = hasActive || !closed[g.id];
+    const sum = g.items.reduce((a, i) => a + (i[2] || 0), 0);
+    return '<div class="nav-group' + (open ? ' open' : '') + '">' +
+      '<button class="nav-group-btn" data-act="nav-group" data-v="' + g.id + '" aria-expanded="' + open + '" aria-controls="ng-' + g.id + '"' + (hasActive ? ' data-locked="1"' : '') + '>' +
+        '<span>' + g.label + '</span><span class="nav-group-end">' + (!open && sum ? '<span class="nav-count">' + sum + '</span>' : '') + ICON.chev + '</span></button>' +
+      '<div class="nav-group-items" id="ng-' + g.id + '">' + g.items.map(link).join('') + '</div></div>';
+  }).join('');
   return '<nav class="nav" aria-label="Hoofdmenu">' +
     '<div class="nav-top"><div class="nav-brand">' + LOGO(26) + '<div class="nav-org">' + esc(S.org.name) + '</div></div>' +
     '<button class="menu-btn" data-act="menu" aria-expanded="false" aria-controls="nav-links">Menu</button></div>' +
-    '<div class="nav-links" id="nav-links">' +
-      link('overzicht', 'Overzicht') + link('terugbellen', 'Terugbellen', S.counts.mine) + link('taken', 'Taken', S.counts.tasks) +
-      soon('Uren') + soon('Kennisbank') + soon('Documenten') +
-      (team ? '<span class="nav-sep">Teamleiding</span>' + (can('team.board') ? link('team', 'Teambord') : '') + (can('reports.view') ? link('cijfers', 'Cijfers') : '') + (can('audit.view') ? link('logboek', 'Logboek') : '') : '') +
-      '<span class="nav-sep">Beheer</span>' + (beheer ? link('mensen', 'Mensen') + link('rollen', 'Rollen &amp; rechten') : '') + link('instellingen', 'Instellingen') +
-    '</div>' +
-    '<div class="nav-user"><div class="nav-user-row">' + avatar(S.me.id, S.me.name) +
+    '<div class="nav-links" id="nav-links">' + groups + '</div>' +
+    '<div class="nav-user">' +
+      (S.running ? '<a class="nav-clock" href="#/uren">' + '<span class="live-dot"></span>Ingeklokt sinds ' + esc(S.running.start) + '</a>' : '') +
+      '<div class="nav-user-row">' + avatar(S.me.id, S.me.name) +
       '<div><strong style="font-size:13px">' + esc(S.me.name) + '</strong><small>' + esc(S.roleName) + '</small></div></div>' +
       '<button class="link-btn" data-act="sound" aria-pressed="' + !!prefs.sound + '">' + ICON.bell + ' Geluid bij nieuw werk: ' + (prefs.sound ? 'aan' : 'uit') + '</button>' +
       (canSysNotify() && Notification.permission === 'default' ? '<button class="link-btn" data-act="notif-allow">Pop-upmeldingen aanzetten</button>' : '') +
@@ -377,6 +447,7 @@ function viewHome() {
     stat('Mijn open taken', S.counts.tasks) + stat('In de open pool', S.counts.pool, 'var(--blue)') + '</div>';
   const row = (href, title, badge) => '<a class="mini-row" href="' + href + '"><span>' + esc(title) + '</span>' + badge + '</a>';
   html += '<div class="cards">';
+  html += homeHoursCard();
   html += '<section class="card"><h2>Eerst terugbellen</h2>' + (S.myCbs.length ? '<div class="mini-list">' +
     S.myCbs.slice(0, 5).map(c => row('#/terugbellen', cbTitle(c), dueBadge(c.dueAt, 'bel'))).join('') + '</div>' : '<p class="muted small">Geen open verzoeken. Lekker bezig!</p>') +
     '<p style="margin:12px 0 0"><a class="more" href="#/terugbellen">Alle verzoeken</a></p></section>';
@@ -734,7 +805,9 @@ const LOG_LABEL = { 'verzoek-nieuw': ['Nieuw', 'blue'], 'verzoek-bewerkt': ['Bew
   'verzoek-heropend': ['Heropend', 'orange'], 'verzoek-opgepakt': ['Opgepakt', 'blue'], 'verzoek-toegewezen': ['Toegewezen', 'blue'], 'taak-nieuw': ['Nieuwe taak', 'blue'], 'taak-bewerkt': ['Taak bewerkt', ''],
   'taak-verwijderd': ['Taak verwijderd', 'red'], 'taak-afgevinkt': ['Afgevinkt', 'green'], 'taak-heropend': ['Taak open', 'orange'], 'taak-herhaling': ['Herhaling', ''],
   'medewerker-nieuw': ['Medewerker', 'dark'], 'medewerker-bewerkt': ['Medewerker', 'dark'], 'medewerker-code': ['Code', 'dark'], 'rol-nieuw': ['Rol', 'dark'], 'rol-bewerkt': ['Rol', 'dark'],
-  'rol-verwijderd': ['Rol', 'red'], 'bedrijf-nieuw': ['Bedrijf', 'dark'], 'bedrijf-bewerkt': ['Bedrijf', 'dark'] };
+  'rol-verwijderd': ['Rol', 'red'], 'bedrijf-nieuw': ['Bedrijf', 'dark'], 'bedrijf-bewerkt': ['Bedrijf', 'dark'],
+  'uren-ingediend': ['Uren ingediend', 'blue'], 'uren-goedgekeurd': ['Uren goed', 'green'], 'uren-afgekeurd': ['Uren afgekeurd', 'red'], 'uren-heropend': ['Uren terug', 'orange'],
+  'rooster': ['Rooster', ''], 'kennisbank': ['Kennisbank', ''], 'documenten': ['Documenten', ''] };
 function viewLog() {
   const L = S.log;
   let h = '<header class="page-head"><div><h1>Logboek</h1><p>Wie wat heeft aangemaakt, gewijzigd, toegewezen of afgerond.</p></div></header>' +
@@ -765,12 +838,13 @@ function viewMembers() {
   const mm = can('members.manage');
   let h = '<header class="page-head"><div><h1>Mensen</h1><p>Iedereen logt in met de bedrijfscode <strong>' + esc(S.org.slug) + '</strong>, zijn naam en een persoonlijke code.</p></div>' +
     (mm ? '<div class="actions"><button class="btn primary" data-act="m-new">' + ICON.plus + 'Medewerker toevoegen</button></div>' : '') + '</header>' + codeAlert();
-  h += '<div class="split"><div class="list"><div class="table-wrap"><table><thead><tr><th>Naam</th><th>Rol</th><th>Status</th><th>Laatst ingelogd</th></tr></thead><tbody>' +
+  h += '<div class="split"><div class="list"><div class="table-wrap"><table><thead><tr><th>Naam</th><th>Rol</th><th>Contract</th><th>Status</th><th>Laatst ingelogd</th></tr></thead><tbody>' +
     S.members.map(u => {
       const cell = c => '<td><button class="rowbtn" data-act="m-sel" data-id="' + u.id + '">' + c + '</button></td>';
       return '<tr class="' + (u.isOwner ? 'admin ' : '') + (same(S.mSel, u.id) && !S.mNew ? 'sel' : '') + '">' +
         cell('<span style="display:inline-flex;gap:8px;align-items:center;font-weight:600">' + (u.isOwner ? ICON.lock : '') + esc(u.name) + (same(u.id, S.me.id) ? ' <span class="small muted">(jij)</span>' : '') + '</span>') +
         cell(u.isOwner ? '<span class="badge dark">Eigenaar</span>' : esc(u.roleName)) +
+        cell('<span class="small">' + esc(contractShort(u)) + '</span>') +
         cell(u.active ? '<span class="small" style="color:var(--green)">Actief</span>' : '<span class="small muted">Gedeactiveerd</span>') +
         cell('<span class="small muted">' + (u.lastLogin ? esc(fmtDate(u.lastLogin)) : 'Nog nooit') + '</span>') + '</tr>';
     }).join('') + '</tbody></table></div></div><aside class="detail card">' + viewMemberPanel() + '</aside></div>';
@@ -805,6 +879,7 @@ function viewMemberPanel() {
   }
   if (!u.canManage && !self) {
     return '<div class="stack" style="gap:12px"><div><span class="small muted">' + esc(u.roleName) + '</span><h2 style="margin:0;font-size:22px">' + esc(u.name) + '</h2></div>' + permSummary(u.roleId) +
+      '<dl class="kv"><dt>Contract</dt><dd>' + esc(contractText(u)) + '</dd></dl>' +
       '<p class="small muted" style="margin:0">' + (can('members.manage') ? 'Deze medewerker heeft meer rechten dan jij; dat kun je niet aanpassen.' : 'Je kunt medewerkers bekijken maar niet aanpassen.') + '</p></div>';
   }
   return '<div class="stack" style="gap:16px"><div><span class="small muted">' + (self ? 'Je eigen account' : 'Bewerken') + '</span><h2 style="margin:0;font-size:22px">' + esc(u.name) + '</h2></div>' +
@@ -812,6 +887,7 @@ function viewMemberPanel() {
     (self ? '<dl class="kv"><dt>Rol</dt><dd>' + esc(u.roleName) + '</dd></dl>' :
       '<div class="field"><label for="m-role">Rol</label><select class="input" id="m-role" data-act-change="m-role-edit">' + roleOptions(u.roleId) + '</select><div id="m-perms">' + permSummary(u.roleId) + '</div></div>' +
       '<label class="check"><input type="checkbox" id="m-active"' + (u.active ? ' checked' : '') + '> Account actief (kan inloggen)</label>') +
+    (!self || S.me.isOwner ? contractFields(u) : '<dl class="kv"><dt>Contract</dt><dd>' + esc(contractText(u)) + '</dd></dl>') +
     '<div class="detail-section"><button class="btn dark" data-act="m-save" data-id="' + u.id + '">Opslaan</button>' +
     (self ? '' : '<button class="btn" data-act="m-reset" data-id="' + u.id + '">Nieuwe code maken</button>') + '</div>' +
     (self ? '<p class="small muted" style="margin:0">Je eigen code wijzig je bij Instellingen.</p>' : '') + '</div>';
@@ -880,6 +956,403 @@ function viewSettings() {
   return h + '</div>';
 }
 
+// ======================================================================
+// Uren, rooster, goedkeuren, urenoverzicht
+// ======================================================================
+function ymd(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+function pd(s) { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d, 12); }
+function addDays(s, n) { const d = pd(s); d.setDate(d.getDate() + n); return ymd(d); }
+function mondayOf(s) { const d = pd(s); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return ymd(d); }
+function today() { return ymd(new Date()); }
+function weekNo(s) {
+  const d = pd(s); const t = new Date(d); t.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const w1 = new Date(t.getFullYear(), 0, 4);
+  return 1 + Math.round(((t - w1) / 864e5 - 3 + ((w1.getDay() + 6) % 7)) / 7);
+}
+function fmtHM(min) { min = Math.round(min || 0); const neg = min < 0; min = Math.abs(min); return (neg ? '-' : '') + Math.floor(min / 60) + ':' + pad(min % 60); }
+function dayShort(s) { const d = pd(s); return DAYS[d.getDay()] + ' ' + d.getDate() + ' ' + MONTHS[d.getMonth()]; }
+function dayLong(s) { const d = pd(s); const t = DAYS_FULL[d.getDay()] + ' ' + d.getDate() + ' ' + MONTHS[d.getMonth()]; return t.charAt(0).toUpperCase() + t.slice(1); }
+function weekLabel(mon) {
+  const a = pd(mon), b = pd(addDays(mon, 6));
+  return 'Week ' + weekNo(mon) + ' · ' + a.getDate() + (a.getMonth() !== b.getMonth() ? ' ' + MONTHS[a.getMonth()] : '') + ' – ' + b.getDate() + ' ' + MONTHS[b.getMonth()] +
+    (b.getFullYear() !== new Date().getFullYear() ? ' ' + b.getFullYear() : '');
+}
+function spanMin(start, end) {
+  const [a, b] = [start, end].map(t => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; });
+  return ((b - a) + 1440) % 1440;
+}
+function contractText(u) {
+  if (!u) return '';
+  if (u.contractType === 'flex') return 'Flex (0-uren)';
+  return Number(u.contractHours) > 0 ? 'Vast, ' + String(Number(u.contractHours)).replace('.', ',') + ' uur per week' : 'Vast, uren nog niet ingevuld';
+}
+function contractShort(u) { return u.contractType === 'flex' ? 'Flex' : (Number(u.contractHours) > 0 ? String(Number(u.contractHours)).replace('.', ',') + ' u/week' : 'Vast'); }
+function contractFields(u) {
+  const flex = u.contractType === 'flex';
+  return '<fieldset class="box" style="margin:0"><legend class="legend" style="padding:0 4px">Contract</legend>' +
+    '<div class="fields2"><div class="field"><label for="m-ctype">Soort</label><select class="input" id="m-ctype" data-act-change="m-ctype">' +
+      '<option value="vast"' + (!flex ? ' selected' : '') + '>Vast contract</option><option value="flex"' + (flex ? ' selected' : '') + '>Flex / 0-uren</option></select></div>' +
+    '<div class="field"><label for="m-chours">Uren per week</label><input class="input" id="m-chours" inputmode="decimal" value="' + (flex ? '' : esc(String(Number(u.contractHours) || '').replace('.', ','))) + '"' + (flex ? ' disabled placeholder="Niet van toepassing"' : ' placeholder="Bijv. 32"') + '></div></div>' +
+    '<span class="small muted">Wordt gebruikt bij Mijn uren en het urenoverzicht om gewerkte uren naast het contract te zetten.</span></fieldset>';
+}
+const H_STATUS = { open: ['Bezig', 'blue'], concept: ['Concept', ''], ingediend: ['Ingediend', 'orange'], goedgekeurd: ['Goedgekeurd', 'green'], afgekeurd: ['Afgekeurd', 'red'] };
+function hBadge(st) { const b = H_STATUS[st] || [st, '']; return '<span class="badge ' + b[1] + '">' + b[0] + '</span>'; }
+function weekNav(act, mon) {
+  const cur = mondayOf(today());
+  return '<div class="weeknav"><button class="icon-btn" data-act="' + act + '" data-v="' + addDays(mon, -7) + '" aria-label="Vorige week">' + ICON.left + '</button>' +
+    '<strong>' + weekLabel(mon) + '</strong>' +
+    '<button class="icon-btn" data-act="' + act + '" data-v="' + addDays(mon, 7) + '" aria-label="Volgende week">' + ICON.right + '</button>' +
+    (mon !== cur ? '<button class="btn small ghost" data-act="' + act + '" data-v="' + cur + '">Naar deze week</button>' : '') + '</div>';
+}
+function runningSince(e) { if (!e) return 0; const d = new Date(e.date + 'T' + e.start + ':00'); return Math.max(0, Math.round((Date.now() - d) / 60000)); }
+
+async function loadHours() {
+  const H = await rpc('cd_hours_week', { p_member: S.hMember || null, p_week: S.hWeek || null });
+  S.hours = H; S.hWeek = H.weekStart;
+}
+
+function homeHoursCard() {
+  const W = S.nowWeek; if (!W) return '';
+  const ct = W.member.contractType, ch = Number(W.member.contractHours) * 60;
+  const todayShifts = W.shifts.filter(s => s.date === W.today);
+  let h = '<section class="card"><h2>Mijn uren</h2>';
+  h += S.running ? '<div class="clock-mini"><span class="live-dot"></span><span>Ingeklokt sinds <strong>' + esc(S.running.start) + '</strong></span></div>' : '';
+  h += '<dl class="kv"><dt>Deze week</dt><dd>' + fmtHM(W.totalMin) + (ct === 'vast' && ch ? ' van ' + fmtHM(ch) : '') + '</dd>' +
+    '<dt>Vandaag ingepland</dt><dd>' + (todayShifts.length ? todayShifts.map(s => esc(s.start + '–' + s.end)).join(', ') : '<span class="muted" style="font-weight:400">Niet ingepland</span>') + '</dd></dl>';
+  h += '<div class="row" style="margin-top:14px">' + (S.running ? '<button class="btn dark small" data-act="clock-out">Uitklokken</button>' : '<button class="btn primary small" data-act="clock-in">Inklokken</button>') +
+    '<a class="btn small ghost" href="#/uren">Naar mijn uren</a></div></section>';
+  if (can('hours.approve') && S.pendingCount) {
+    h += '<section class="card"><h2>Uren goedkeuren</h2><p class="muted small" style="margin:0 0 12px">' + S.pendingCount + (S.pendingCount === 1 ? ' regel wacht' : ' regels wachten') + ' op jouw beoordeling.</p>' +
+      '<a class="btn small" href="#/goedkeuren">Beoordelen</a></section>';
+  }
+  return h;
+}
+
+function clockCard() {
+  const R = S.running;
+  return '<section class="card clock' + (R ? ' on' : '') + '"><div class="clock-text">' +
+    (R ? '<span class="small">' + '<span class="live-dot"></span> Ingeklokt sinds ' + esc(R.start) + (R.date !== today() ? ' (' + esc(dayShort(R.date)) + ')' : '') + '</span><strong id="clock-elapsed" data-date="' + esc(R.date) + '" data-start="' + esc(R.start) + '">' + fmtHM(runningSince(R)) + '</strong>'
+      : '<span class="small muted">Je bent niet ingeklokt</span><strong>Begin je dienst</strong>') + '</div>' +
+    (R ? '<button class="btn dark" data-act="clock-out">Uitklokken</button>' : '<button class="btn primary" data-act="clock-in">Inklokken</button>') + '</section>';
+}
+
+function entryForm() {
+  const E = S.hEdit;
+  return '<div class="entry-form" role="group" aria-label="Uren invullen">' +
+    '<div class="fields4"><div class="field"><label for="h-date">Datum</label><input class="input" type="date" id="h-date" data-h="date" value="' + esc(E.date) + '" max="' + addDays(today(), 1) + '"></div>' +
+    '<div class="field"><label for="h-start">Begin</label><input class="input" type="time" id="h-start" data-h="start" value="' + esc(E.start) + '"></div>' +
+    '<div class="field"><label for="h-end">Eind</label><input class="input" type="time" id="h-end" data-h="end" value="' + esc(E.end) + '"></div>' +
+    '<div class="field"><label for="h-break">Pauze (min)</label><input class="input" type="number" min="0" max="600" step="5" id="h-break" data-h="breakMin" value="' + esc(E.breakMin) + '"></div></div>' +
+    '<div class="field"><label for="h-note">Notitie <span class="muted" style="font-weight:400">(optioneel)</span></label><input class="input" id="h-note" data-h="note" maxlength="300" value="' + esc(E.note) + '" placeholder="Bijv. inventarisatie magazijn"></div>' +
+    (E.start && E.end && E.start !== E.end ? '<p class="small muted" style="margin:0">Totaal: <strong>' + fmtHM(Math.max(0, spanMin(E.start, E.end) - (Number(E.breakMin) || 0))) + '</strong>' + (E.end < E.start ? ' (loopt door na middernacht)' : '') + '</p>' : '') +
+    '<div class="form-foot" style="justify-content:flex-start"><button class="btn primary small" data-act="h-save">Opslaan</button><button class="btn small ghost" data-act="h-cancel">Annuleren</button></div></div>';
+}
+function entryRow(e, self) {
+  if (S.hEdit && same(S.hEdit.id, e.id)) return entryForm();
+  const editable = self && ['concept', 'afgekeurd'].includes(e.status);
+  return '<div class="entry' + (e.status === 'afgekeurd' ? ' bad' : '') + '"><div class="entry-main">' +
+    '<span class="entry-time">' + esc(e.start) + ' – ' + (e.end ? esc(e.end) : 'nu') + '</span>' +
+    (e.breakMin ? '<span class="small muted">' + e.breakMin + ' min pauze</span>' : '') +
+    (e.note ? '<span class="small entry-note">' + esc(e.note) + '</span>' : '') + '</div>' +
+    '<div class="entry-side"><strong>' + (e.minutes == null ? fmtHM(runningSince(e)) : fmtHM(e.minutes)) + '</strong>' + hBadge(e.status) +
+    (editable ? '<button class="icon-btn small" data-act="h-edit" data-id="' + e.id + '" aria-label="Bewerken">' + ICON.edit + '</button><button class="icon-btn small" data-act="h-del" data-id="' + e.id + '" aria-label="Verwijderen">' + ICON.trash + '</button>' : '') +
+    (!self && e.status === 'goedgekeurd' && can('hours.approve') ? '<button class="btn small ghost" data-act="h-reopen" data-id="' + e.id + '">Terugzetten</button>' : '') + '</div>' +
+    (e.status === 'afgekeurd' && e.rejectReason ? '<div class="entry-reason">Afgekeurd door ' + esc(e.reviewedByName || 'teamleider') + ': ' + esc(e.rejectReason) + '</div>' : '') + '</div>';
+}
+
+function viewHours() {
+  const H = S.hours; if (!H) return '';
+  const self = same(H.member.id, S.me.id);
+  const mon = H.weekStart;
+  const ct = H.member.contractType, ch = Number(H.member.contractHours) * 60;
+  const planned = H.shifts.reduce((a, s) => a + spanMin(s.start, s.end), 0);
+  let h = '<header class="page-head"><div><h1>' + (self ? 'Mijn uren' : 'Uren van ' + esc(H.member.name)) + '</h1><p>' +
+    (self ? 'Klok in en uit, of vul je uren achteraf in. Klopt je week? Dien hem in.' : esc(contractText(H.member)) + '. Je bekijkt deze uren alleen.') + '</p></div>' +
+    (!self ? '<div class="actions"><button class="btn" data-act="h-me">' + ICON.left + 'Mijn eigen uren</button></div>' : '') + '</header>';
+  h += weekNav('h-week', mon);
+  if (self && mon === mondayOf(today())) h += clockCard();
+  const diff = H.totalMin - ch;
+  h += '<div class="stats">' + stat('Gewerkt', fmtHM(H.totalMin)) + stat('Ingepland', fmtHM(planned)) +
+    stat('Contract', ct === 'flex' ? 'Flex' : (ch ? fmtHM(ch) : '–')) +
+    stat(ct === 'flex' || !ch ? 'Verschil' : (diff >= 0 ? 'Boven contract' : 'Nog te gaan'), ct === 'flex' || !ch ? '–' : fmtHM(Math.abs(diff)), ct === 'vast' && ch && diff > 0 ? 'var(--orange)' : null) + '</div>';
+  if (ct === 'vast' && ch) h += '<div class="progress" role="progressbar" aria-label="Gewerkt van contract" aria-valuemin="0" aria-valuemax="' + ch + '" aria-valuenow="' + H.totalMin + '"><span style="width:' + Math.min(100, H.totalMin / ch * 100) + '%"></span></div>';
+  h += '<div class="days">' + [0, 1, 2, 3, 4, 5, 6].map(i => {
+    const d = addDays(mon, i);
+    const es = H.entries.filter(e => e.date === d);
+    const ss = H.shifts.filter(s => s.date === d);
+    const tot = es.reduce((a, e) => a + (e.minutes || 0), 0);
+    const adding = S.hEdit && !S.hEdit.id && S.hEdit.date === d;
+    return '<section class="day' + (d === H.today ? ' today' : '') + '"><div class="day-head"><div class="day-name"><strong>' + esc(dayLong(d)) + '</strong>' +
+      (d === H.today ? '<span class="badge blue">Vandaag</span>' : '') +
+      (ss.length ? '<span class="small muted">Ingepland ' + ss.map(s => esc(s.start + '–' + s.end) + (s.note ? ' (' + esc(s.note) + ')' : '')).join(', ') + '</span>' : '') + '</div>' +
+      '<span class="day-total">' + (tot ? fmtHM(tot) : '') + '</span></div>' +
+      es.map(e => entryRow(e, self)).join('') + (adding ? entryForm() : '') +
+      (self && !adding && d <= addDays(H.today, 1) ? '<button class="add-line" data-act="h-add" data-v="' + d + '">' + ICON.plus + 'Uren toevoegen</button>' : '') + '</section>';
+  }).join('') + '</div>';
+  if (self) {
+    const todo = H.entries.filter(e => ['concept', 'afgekeurd'].includes(e.status));
+    const sent = H.entries.filter(e => e.status === 'ingediend').length;
+    if (todo.length) {
+      h += '<section class="card submit-bar"><div><strong>' + todo.length + (todo.length === 1 ? ' regel' : ' regels') + ' nog niet ingediend · ' + fmtHM(todo.reduce((a, e) => a + (e.minutes || 0), 0)) + '</strong>' +
+        '<p class="small muted" style="margin:2px 0 0">Na indienen kan je teamleider de uren goedkeuren. Daarna kun je ze niet meer wijzigen.</p></div>' +
+        '<button class="btn primary" data-act="h-submit">Week indienen</button></section>';
+    } else if (sent) {
+      h += '<div class="alert info">' + '<span>Deze week is ingediend en wacht op goedkeuring.</span></div>';
+    }
+  }
+  return h;
+}
+
+function viewRoster() {
+  const R = S.roster; if (!R) return '';
+  const mon = R.weekStart; const days = [0, 1, 2, 3, 4, 5, 6].map(i => addDays(mon, i));
+  let h = '<header class="page-head"><div><h1>Rooster</h1><p>Wie wanneer werkt.' + (R.canPlan ? ' Klik op + in een vak om een dienst in te plannen, of op een dienst om hem te wijzigen.' : '') + '</p></div></header>';
+  h += weekNav('ro-week', mon);
+  if (S.shiftEdit) {
+    const E = S.shiftEdit;
+    h += '<section class="card stack" style="gap:14px;max-width:none"><h2 style="margin:0">' + (E.id ? 'Dienst wijzigen' : 'Dienst inplannen') + '</h2>' +
+      '<div class="fields4"><div class="field"><label for="sh-member">Medewerker</label><select class="input" id="sh-member" data-sh="memberId">' +
+        R.people.map(p => '<option value="' + p.id + '"' + (same(p.id, E.memberId) ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label for="sh-date">Datum</label><input class="input" type="date" id="sh-date" data-sh="date" value="' + esc(E.date) + '"></div>' +
+      '<div class="field"><label for="sh-start">Begin</label><input class="input" type="time" id="sh-start" data-sh="start" value="' + esc(E.start) + '"></div>' +
+      '<div class="field"><label for="sh-end">Eind</label><input class="input" type="time" id="sh-end" data-sh="end" value="' + esc(E.end) + '"></div></div>' +
+      '<div class="field"><label for="sh-note">Notitie <span class="muted" style="font-weight:400">(optioneel, bijv. balie of magazijn)</span></label><input class="input" id="sh-note" data-sh="note" maxlength="120" value="' + esc(E.note) + '"></div>' +
+      '<div class="form-foot">' + (E.id ? '<button class="btn danger small" data-act="sh-del" data-id="' + E.id + '" style="margin-right:auto">' + ICON.trash + 'Verwijderen</button>' : '') +
+      '<button class="btn small ghost" data-act="sh-cancel">Annuleren</button><button class="btn primary small" data-act="sh-save">' + (E.id ? 'Opslaan' : 'Inplannen') + '</button></div></section>';
+  }
+  if (!R.people.length) return h + '<div class="empty">Nog geen actieve medewerkers.</div>';
+  h += '<div class="table-wrap"><table class="roster"><thead><tr><th>Medewerker</th>' + days.map(d => '<th class="' + (d === today() ? 'is-today' : '') + '">' + esc(dayShort(d)) + '</th>').join('') + '<th>Totaal</th></tr></thead><tbody>' +
+    R.people.map(p => {
+      const mine = R.shifts.filter(s => same(s.memberId, p.id));
+      const tot = mine.reduce((a, s) => a + spanMin(s.start, s.end), 0);
+      const ch = p.contractType === 'vast' ? Number(p.contractHours) * 60 : 0;
+      return '<tr class="' + (same(p.id, S.me.id) ? 'me' : '') + '"><td class="pad"><strong>' + esc(p.name) + '</strong><div class="small muted">' + esc(contractShort(p)) + '</div></td>' +
+        days.map(d => '<td class="rc' + (d === today() ? ' is-today' : '') + '">' + mine.filter(s => s.date === d).map(s => R.canPlan
+          ? '<button class="shift" data-act="sh-edit" data-id="' + s.id + '" title="' + esc(s.note || '') + '">' + esc(s.start + '–' + s.end) + (s.note ? '<small>' + esc(s.note) + '</small>' : '') + '</button>'
+          : '<span class="shift">' + esc(s.start + '–' + s.end) + (s.note ? '<small>' + esc(s.note) + '</small>' : '') + '</span>').join('') +
+          (R.canPlan ? '<button class="cell-add" data-act="sh-new" data-id="' + p.id + '" data-v="' + d + '" aria-label="Dienst inplannen voor ' + esc(p.name) + ' op ' + esc(dayShort(d)) + '">+</button>' : '') + '</td>').join('') +
+        '<td class="pad"><strong>' + fmtHM(tot) + '</strong>' + (ch ? '<div class="small muted">van ' + fmtHM(ch) + '</div>' : '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  return h;
+}
+
+function pendingGroups() {
+  const G = []; const by = {};
+  (S.pending || []).forEach(e => {
+    const k = e.memberId + '|' + e.weekStart;
+    if (!by[k]) { by[k] = { key: k, memberId: e.memberId, name: e.memberName, week: e.weekStart, entries: [] }; G.push(by[k]); }
+    by[k].entries.push(e);
+  });
+  return G;
+}
+function viewApprove() {
+  const G = pendingGroups();
+  let h = '<header class="page-head"><div><h1>Uren goedkeuren</h1><p>Ingediende uren van het team. Vink uit wat je niet wilt meenemen. Je eigen uren keurt iemand anders goed.</p></div></header>';
+  if (!S.pending) return h;
+  if (!G.length) return h + '<div class="empty-state card"><strong>Alles is beoordeeld</strong>Er wachten geen ingediende uren.</div>';
+  h += G.map(g => {
+    const on = g.entries.filter(e => !S.pOff[e.id]);
+    const total = on.reduce((a, e) => a + (e.minutes || 0), 0);
+    return '<section class="card approve"><div class="section-title"><div style="display:flex;gap:10px;align-items:center">' + avatar(g.memberId, g.name) +
+      '<div><strong>' + esc(g.name) + '</strong><div class="small muted">' + weekLabel(g.week) + '</div></div></div>' +
+      '<button class="btn small ghost" data-act="p-view" data-id="' + g.memberId + '" data-v="' + g.week + '">Hele week bekijken</button></div>' +
+      '<div class="table-wrap" style="border:0;margin-top:8px"><table><thead><tr><th style="width:44px"><span class="sr-only">Meenemen</span></th><th>Dag</th><th>Tijd</th><th>Pauze</th><th>Uren</th><th>Notitie</th></tr></thead><tbody>' +
+      g.entries.map(e => '<tr><td class="pad"><input type="checkbox" data-psel="' + e.id + '"' + (S.pOff[e.id] ? '' : ' checked') + ' aria-label="' + esc(dayShort(e.date)) + ' meenemen"></td>' +
+        '<td class="pad">' + esc(dayShort(e.date)) + '</td><td class="pad">' + esc(e.start + ' – ' + e.end) + '</td><td class="pad">' + (e.breakMin ? e.breakMin + ' min' : '–') + '</td>' +
+        '<td class="pad"><strong>' + fmtHM(e.minutes) + '</strong></td><td class="pad small">' + esc(e.note || '') + '</td></tr>').join('') + '</tbody></table></div>' +
+      (S.rejectFor === g.key
+        ? '<div class="reject-box"><div class="field"><label for="rej-reason">Waarom keur je ' + (on.length === 1 ? 'deze regel' : 'deze ' + on.length + ' regels') + ' af?</label><input class="input" id="rej-reason" maxlength="300" placeholder="Bijv. pauze ontbreekt op dinsdag"></div>' +
+          '<div class="form-foot"><button class="btn small ghost" data-act="p-reject-cancel">Annuleren</button><button class="btn small danger" data-act="p-reject" data-v="' + g.key + '">Afkeuren</button></div></div>'
+        : '<div class="form-foot" style="margin-top:12px;align-items:center"><span class="small muted" style="margin-right:auto">Geselecteerd: <strong>' + on.length + '</strong> · ' + fmtHM(total) + ' uur</span>' +
+          '<button class="btn small" data-act="p-reject-open" data-v="' + g.key + '"' + (on.length ? '' : ' disabled') + '>Afkeuren…</button>' +
+          '<button class="btn small primary" data-act="p-approve" data-v="' + g.key + '"' + (on.length ? '' : ' disabled') + '>Goedkeuren</button></div>') + '</section>';
+  }).join('');
+  return h;
+}
+
+function periodRange(key) {
+  const t = pd(today());
+  if (key === 'week') { const m = mondayOf(today()); return [m, addDays(m, 6)]; }
+  if (key === 'vorigeweek') { const m = addDays(mondayOf(today()), -7); return [m, addDays(m, 6)]; }
+  if (key === 'maand') return [ymd(new Date(t.getFullYear(), t.getMonth(), 1)), ymd(new Date(t.getFullYear(), t.getMonth() + 1, 0))];
+  if (key === 'vorigemaand') return [ymd(new Date(t.getFullYear(), t.getMonth() - 1, 1)), ymd(new Date(t.getFullYear(), t.getMonth(), 0))];
+  return [S.repFrom || today(), S.repTo || today()];
+}
+async function loadReport() {
+  const [f, t] = periodRange(S.repPeriod);
+  S.repFrom = f; S.repTo = t;
+  S.report = await rpc('cd_hours_report', { p_from: f, p_to: t });
+}
+function viewReport() {
+  const R = S.report;
+  const periods = [['week', 'Deze week'], ['vorigeweek', 'Vorige week'], ['maand', 'Deze maand'], ['vorigemaand', 'Vorige maand'], ['eigen', 'Zelf kiezen']];
+  let h = '<header class="page-head"><div><h1>Urenoverzicht</h1><p>Gewerkte uren per medewerker, naast het contract. Klik op iemand voor de details.</p></div>' +
+    '<div class="actions"><button class="btn" data-act="rep-csv"' + (R && R.entries.length ? '' : ' disabled') + '>' + ICON.download + 'Exporteren (CSV)</button></div></header>';
+  h += '<div class="seg" role="group" aria-label="Periode">' + periods.map(p => '<button data-act="rep-period" data-v="' + p[0] + '" class="' + (S.repPeriod === p[0] ? 'on' : '') + '" aria-pressed="' + (S.repPeriod === p[0]) + '">' + p[1] + '</button>').join('') + '</div>';
+  if (S.repPeriod === 'eigen') {
+    h += '<div class="row" style="align-items:flex-end;max-width:620px"><div class="field" style="flex:1 1 160px"><label for="rep-from">Van</label><input class="input" type="date" id="rep-from" value="' + esc(S.repFrom || '') + '"></div>' +
+      '<div class="field" style="flex:1 1 160px"><label for="rep-to">Tot en met</label><input class="input" type="date" id="rep-to" value="' + esc(S.repTo || '') + '"></div>' +
+      '<button class="btn dark" data-act="rep-custom">Toon</button></div>';
+  }
+  if (!R) return h;
+  const sum = k => R.people.reduce((a, p) => a + (p[k] || 0), 0);
+  h += '<p class="small muted" style="margin:0">' + esc(dayShort(R.from)) + ' t/m ' + esc(dayShort(R.to)) + ' · ' + R.workdays + ' werkdagen</p>';
+  h += '<div class="stats">' + stat('Goedgekeurd', fmtHM(sum('approvedMin')), 'var(--green)') + stat('Ingediend, wacht', fmtHM(sum('submittedMin')), 'var(--orange)') +
+    stat('Nog niet ingediend', fmtHM(sum('conceptMin'))) + stat('Medewerkers', R.people.length) + '</div>';
+  h += '<div class="table-wrap"><table><thead><tr><th>Naam</th><th>Contract</th><th>Verwacht</th><th>Goedgekeurd</th><th>Ingediend</th><th>Niet ingediend</th><th>Verschil</th></tr></thead><tbody>' +
+    R.people.map(p => {
+      const worked = p.approvedMin + p.submittedMin;
+      const diff = p.expectedMin == null ? null : worked - p.expectedMin;
+      const cell = c => '<td><button class="rowbtn" data-act="p-view" data-id="' + p.id + '" data-v="' + mondayOf(R.from) + '">' + c + '</button></td>';
+      return '<tr>' + cell('<strong>' + esc(p.name) + '</strong>' + (p.active ? '' : ' <span class="small muted">(gedeactiveerd)</span>')) + cell('<span class="small">' + esc(contractShort(p)) + '</span>') +
+        cell(p.expectedMin == null ? '–' : fmtHM(p.expectedMin)) + cell('<strong>' + fmtHM(p.approvedMin) + '</strong>') + cell(p.submittedMin ? fmtHM(p.submittedMin) : '–') +
+        cell(p.conceptMin ? fmtHM(p.conceptMin) : '–') +
+        cell(diff == null || !p.expectedMin ? '–' : '<span style="color:' + (diff < 0 ? 'var(--red)' : 'var(--green)') + '">' + (diff > 0 ? '+' : '') + fmtHM(diff) + '</span>') + '</tr>';
+    }).join('') + '</tbody></table></div>' +
+    '<p class="small muted" style="margin:0">Verwacht = contracturen × werkdagen ÷ 5. Feestdagen en verlof tellen hier nog niet mee. Verschil = goedgekeurd + ingediend − verwacht.</p>';
+  return h;
+}
+function exportCsv() {
+  const R = S.report; if (!R) return;
+  const q = v => { const s = String(v == null ? '' : v); return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const rows = [['Naam', 'Datum', 'Begin', 'Eind', 'Pauze (min)', 'Uren', 'Status', 'Notitie']]
+    .concat(R.entries.map(e => [e.memberName, e.date, e.start, e.end, e.breakMin, ((e.minutes || 0) / 60).toFixed(2).replace('.', ','), (H_STATUS[e.status] || [e.status])[0], e.note]));
+  const blob = new Blob(['﻿' + rows.map(r => r.map(q).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'uren-' + R.from + '-tm-' + R.to + '.csv';
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+
+// ======================================================================
+// Kennisbank
+// ======================================================================
+function md(src) {
+  const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
+  let out = '', list = null, para = [];
+  const flushP = () => { if (para.length) { out += '<p>' + para.map(inline).join('<br>') + '</p>'; para = []; } };
+  const flushL = () => { if (list) { out += '</' + list + '>'; list = null; } };
+  String(src || '').replace(/\r/g, '').split('\n').forEach(raw => {
+    const l = raw.replace(/\s+$/, ''); let m;
+    if (!l.trim()) { flushP(); flushL(); return; }
+    if ((m = l.match(/^(#{1,3})\s+(.*)$/))) { flushP(); flushL(); const n = m[1].length + 1; out += '<h' + n + '>' + inline(m[2]) + '</h' + n + '>'; return; }
+    if ((m = l.match(/^\s*[-*]\s+(.*)$/))) { flushP(); if (list !== 'ul') { flushL(); out += '<ul>'; list = 'ul'; } out += '<li>' + inline(m[1]) + '</li>'; return; }
+    if ((m = l.match(/^\s*\d+[.)]\s+(.*)$/))) { flushP(); if (list !== 'ol') { flushL(); out += '<ol>'; list = 'ol'; } out += '<li>' + inline(m[1]) + '</li>'; return; }
+    flushL(); para.push(l);
+  });
+  flushP(); flushL();
+  return out;
+}
+async function loadKb() {
+  S.kb = await rpc('cd_kb_list', { p_q: S.kbQ.trim() || null, p_cat: S.kbCat || null });
+  if (S.kbSel) { try { S.kbArticle = await rpc('cd_kb_get', { p_id: S.kbSel }); } catch (e) { S.kbSel = null; S.kbArticle = null; } }
+}
+function kbPanel() {
+  const K = S.kb;
+  if (S.kbEdit) {
+    const E = S.kbEdit;
+    return '<div class="stack" style="gap:14px;max-width:none"><div><span class="small muted">' + (E.id ? 'Artikel bewerken' : 'Nieuw artikel') + '</span></div>' +
+      '<div class="field"><label for="kb-title">Titel *</label><input class="input" id="kb-title" data-kb="title" maxlength="160" value="' + esc(E.title) + '" placeholder="Bijv. Een retour verwerken"></div>' +
+      '<div class="field"><label for="kb-cat">Categorie</label><input class="input" id="kb-cat" data-kb="category" maxlength="40" list="kb-cats" value="' + esc(E.category) + '" placeholder="Bijv. Klantenservice">' +
+        '<datalist id="kb-cats">' + K.categories.map(c => '<option value="' + esc(c) + '">').join('') + '</datalist></div>' +
+      '<div class="field"><label for="kb-body">Tekst</label><textarea class="input" id="kb-body" data-kb="body" rows="16" aria-describedby="kb-help">' + esc(E.body) + '</textarea>' +
+        '<span class="small muted" id="kb-help">Opmaak: # Kop · ## Tussenkop · **vet** · regels die met - beginnen worden een lijst · 1. genummerde stappen · links worden vanzelf klikbaar.</span></div>' +
+      '<label class="check"><input type="checkbox" id="kb-pin" data-kb-pin' + (E.pinned ? ' checked' : '') + '> Vastzetten bovenaan</label>' +
+      '<div class="form-foot"><button class="btn ghost" data-act="kb-cancel">Annuleren</button><button class="btn primary" data-act="kb-save">' + (E.id ? 'Opslaan' : 'Publiceren') + '</button></div></div>';
+  }
+  const A = S.kbArticle;
+  if (!A) return '<div class="empty-state"><strong>Kies een artikel</strong>Of zoek op een woord, bijvoorbeeld "retour" of "wachtwoord".</div>';
+  return '<article class="stack" style="gap:12px;max-width:none"><div>' + (A.category ? '<span class="badge">' + esc(A.category) + '</span> ' : '') + (A.pinned ? '<span class="badge blue">' + ICON.pin + ' Vast</span>' : '') +
+    '<h2 class="kb-title">' + esc(A.title) + '</h2><p class="small muted" style="margin:0">Bijgewerkt ' + esc(fmtDate(A.updatedAt)) + ' door ' + esc(A.updatedByName || 'onbekend') + '</p></div>' +
+    '<div class="prose">' + (A.body.trim() ? md(A.body) : '<p class="muted">Dit artikel is nog leeg.</p>') + '</div>' +
+    (A.canEdit ? '<div class="detail-section" style="flex-direction:row;flex-wrap:wrap"><button class="btn small" data-act="kb-edit">' + ICON.edit + 'Bewerken</button><button class="btn small danger" data-act="kb-del">' + ICON.trash + 'Verwijderen</button></div>' : '') + '</article>';
+}
+function viewKb() {
+  const K = S.kb; if (!K) return '';
+  let h = '<header class="page-head"><div><h1>Kennisbank</h1><p>Werkinstructies, afspraken en antwoorden op vaste vragen. Voor iedereen in ' + esc(S.org.name) + '.</p></div>' +
+    (K.canEdit ? '<div class="actions"><button class="btn primary" data-act="kb-new">' + ICON.plus + 'Nieuw artikel</button></div>' : '') + '</header>';
+  h += '<div class="search soft">' + ICON.search + '<label class="sr-only" for="kb-q">Zoeken in de kennisbank</label><input id="kb-q" type="search" data-in="kbq" value="' + esc(S.kbQ) + '" placeholder="Zoek in titels en tekst" autocomplete="off"></div>';
+  if (K.categories.length) {
+    h += '<div class="chips">' + [['', 'Alles']].concat(K.categories.map(c => [c, c])).map(c => '<button class="chip' + (S.kbCat === c[0] ? ' on' : '') + '" data-act="kb-cat" data-v="' + esc(c[0]) + '" aria-pressed="' + (S.kbCat === c[0]) + '">' + esc(c[1]) + '</button>').join('') + '</div>';
+  }
+  if (!K.articles.length && !S.kbQ && !S.kbCat && !S.kbEdit) {
+    return h + '<div class="empty-state card"><strong>Nog geen artikelen</strong>' + (K.canEdit ? 'Schrijf het eerste, bijvoorbeeld hoe jullie een retour afhandelen of wie je belt bij storing.' : 'Zodra je teamleider iets schrijft, staat het hier.') + '</div>';
+  }
+  h += '<div class="split"><div class="list">' + (K.articles.length ? K.articles.map(a => '<button class="item' + (same(a.id, S.kbSel) && !S.kbEdit ? ' sel' : '') + '" data-act="kb-sel" data-id="' + a.id + '">' +
+    '<span class="item-top"><span class="item-title">' + (a.pinned ? ICON.pin + ' ' : '') + esc(a.title) + '</span>' + (a.category ? '<span class="badge">' + esc(a.category) + '</span>' : '') + '</span>' +
+    (a.excerpt.trim() ? '<span class="item-sub">' + esc(a.excerpt.trim()) + (a.excerpt.length >= 180 ? '…' : '') + '</span>' : '') +
+    '<span class="item-meta">Bijgewerkt ' + esc(fmtDate(a.updatedAt)) + ' · ' + esc(a.updatedByName || '') + '</span></button>').join('') : '<div class="empty">Niets gevonden.</div>') +
+    '</div><aside class="detail card" style="flex:2 1 460px">' + kbPanel() + '</aside></div>';
+  return h;
+}
+
+// ======================================================================
+// Documenten
+// ======================================================================
+async function loadDocs() {
+  try { S.docs = await rpc('cd_docs', { p_folder: S.docFolder || null }); }
+  catch (e) { if (S.docFolder) { S.docFolder = null; S.docs = await rpc('cd_docs', { p_folder: null }); toast(e.message, true); } else throw e; }
+}
+function fmtSize(b) { if (b < 1024) return b + ' B'; if (b < 1048576) return Math.round(b / 1024) + ' KB'; return (b / 1048576).toFixed(1).replace('.', ',') + ' MB'; }
+function extOf(n) { const m = String(n).match(/\.([A-Za-z0-9]+)$/); return m ? m[1].toUpperCase().slice(0, 4) : 'BESTAND'; }
+function folderForm() {
+  const E = S.folderEdit; const D = S.docs;
+  return '<section class="card stack" style="gap:14px"><h2 style="margin:0">' + (E.id ? 'Map bewerken' : 'Nieuwe map') + '</h2>' +
+    '<div class="field"><label for="fo-name">Naam</label><input class="input" id="fo-name" data-fo="name" maxlength="60" value="' + esc(E.name) + '" placeholder="Bijv. Handboeken"></div>' +
+    '<fieldset class="perm-group"><legend class="legend" style="padding:0 4px">Wie mag deze map zien?</legend>' +
+      D.roles.map(r => '<label class="check"><input type="checkbox" data-fo-role="' + r.id + '"' + (E.roleIds.some(x => same(x, r.id)) ? ' checked' : '') + '> ' + esc(r.name) + '</label>').join('') +
+      '<span class="small muted">Niets aangevinkt = iedereen. De eigenaar en mensen met het recht "Mappen en documenten beheren" zien altijd alles.</span></fieldset>' +
+    '<div class="form-foot">' + (E.id ? '<button class="btn danger small" data-act="fo-del" style="margin-right:auto">' + ICON.trash + 'Map verwijderen</button>' : '') +
+      '<button class="btn small ghost" data-act="fo-cancel">Annuleren</button><button class="btn primary small" data-act="fo-save">' + (E.id ? 'Opslaan' : 'Map maken') + '</button></div></section>';
+}
+function viewDocs() {
+  const D = S.docs; if (!D) return '';
+  const F = D.folder;
+  const access = f => f.roleIds.length ? 'Alleen ' + f.roleNames.join(', ') : 'Iedereen';
+  let h = '<header class="page-head"><div>' + (F ? '<nav class="crumbs" aria-label="Kruimelpad"><a href="#/documenten" data-act="doc-folder" data-v="">Documenten</a> / </nav>' : '') +
+    '<h1>' + (F ? esc(F.name) : 'Documenten') + '</h1><p>' + (F ? 'Zichtbaar voor: ' + esc(access(D.folders.find(x => same(x.id, F.id)) || { roleIds: F.roleIds, roleNames: [] })) : 'Handboeken, formulieren en afspraken. Per map bepaal je wie erbij kan.') + '</p></div>' +
+    '<div class="actions">' + (F && D.canManage ? '<button class="btn" data-act="fo-edit" data-id="' + F.id + '">' + ICON.edit + 'Map bewerken</button>' : '') +
+    (!F && D.canManage ? '<button class="btn" data-act="fo-new">' + ICON.plus + 'Nieuwe map</button>' : '') +
+    (D.canUpload ? '<label class="btn primary upload-btn">' + ICON.upload + 'Uploaden<input type="file" multiple data-in="upload" class="sr-only"></label>' : '') + '</div></header>';
+  if (S.uploading) h += '<div class="alert info" role="status"><span>' + esc(S.uploading) + '</span></div>';
+  if (S.folderEdit) h += folderForm();
+  if (!F) {
+    h += '<div class="folders">' + D.folders.map(f => '<button class="folder" data-act="doc-folder" data-v="' + f.id + '">' + ICON.folder +
+      '<span><strong>' + esc(f.name) + '</strong><small>' + f.count + (f.count === 1 ? ' document' : ' documenten') + ' · ' + esc(access(f)) + '</small></span></button>').join('') + '</div>';
+  }
+  h += '<section class="stack" style="gap:8px;max-width:none"><div class="section-title"><h2>' + (F ? 'In deze map' : 'Algemeen') + '</h2>' + (!F ? '<span class="small muted">Voor iedereen zichtbaar</span>' : '') + '</div>';
+  if (!D.docs.length) {
+    h += '<div class="empty">' + (D.canUpload ? 'Nog geen documenten. Klik op Uploaden om er een toe te voegen (maximaal 20 MB per bestand).' : 'Nog geen documenten.') + '</div>';
+  } else {
+    h += '<div class="doc-list">' + D.docs.map(d => '<div class="doc"><span class="doc-ext">' + esc(extOf(d.name)) + '</span>' +
+      '<div class="doc-main"><strong>' + esc(d.name) + '</strong><span class="small muted">' + fmtSize(d.size) + ' · ' + esc(d.uploadedByName || '') + ' · ' + esc(fmtDate(d.createdAt)) + '</span></div>' +
+      '<div class="doc-act"><button class="btn small" data-act="doc-dl" data-id="' + d.id + '">' + ICON.download + 'Downloaden</button>' +
+      (d.canDelete ? '<button class="icon-btn small" data-act="doc-del" data-id="' + d.id + '" aria-label="' + esc(d.name) + ' verwijderen">' + ICON.trash + '</button>' : '') + '</div></div>').join('') + '</div>';
+  }
+  return h + '</section>';
+}
+async function uploadFiles(files) {
+  const D = S.docs; const folder = D && D.folder ? D.folder.id : null;
+  let ok = 0; const fails = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    S.uploading = 'Bezig met uploaden (' + (i + 1) + ' van ' + files.length + '): ' + f.name; render();
+    let prep = null;
+    try {
+      prep = await rpc('cd_doc_prepare', { p_folder: folder, p_name: f.name, p_size: f.size, p_mime: f.type || '' });
+      const { error } = await sb.storage.from('crewdeck').upload(prep.path, f, { contentType: f.type || 'application/octet-stream', upsert: false });
+      if (error) throw new Error('Uploaden mislukt: ' + error.message);
+      await rpc('cd_doc_confirm', { p_id: prep.id });
+      ok++;
+    } catch (e) {
+      fails.push(f.name + ': ' + e.message);
+      if (prep) { try { await rpc('cd_doc_delete', { p_id: prep.id }); } catch (err) { /* */ } }
+    }
+  }
+  S.uploading = null;
+  await loadDocs(); render();
+  if (fails.length) toast((ok ? ok + ' geüpload, ' + fails.length + ' niet. ' : '') + fails.join(' · '), true); else toast(ok === 1 ? 'Document geüpload.' : ok + ' documenten geüpload.');
+}
+
 // ---------- formulieren inloggen / registreren ----------
 $app.addEventListener('submit', async e => {
   const f = e.target.closest('form[data-form]');
@@ -931,6 +1404,17 @@ $app.addEventListener('input', e => {
       } catch (err) { toast(err.message, true); }
     }, 250);
   }
+  if (el.dataset.h && S.hEdit) {
+    S.hEdit[el.dataset.h] = el.value;
+    if (['start', 'end', 'breakMin'].includes(el.dataset.h)) { const box = el.closest('.entry-form'); if (box) { const p = box.querySelector('p.small'); const E = S.hEdit;
+      const txt = E.start && E.end && E.start !== E.end ? 'Totaal: <strong>' + fmtHM(Math.max(0, spanMin(E.start, E.end) - (Number(E.breakMin) || 0))) + '</strong>' + (E.end < E.start ? ' (loopt door na middernacht)' : '') : '';
+      if (p) p.innerHTML = txt; else if (txt) box.querySelector('.form-foot').insertAdjacentHTML('beforebegin', '<p class="small muted" style="margin:0">' + txt + '</p>'); } }
+    return;
+  }
+  if (el.dataset.sh && S.shiftEdit) { S.shiftEdit[el.dataset.sh] = el.value; return; }
+  if (el.dataset.kb && S.kbEdit) { S.kbEdit[el.dataset.kb] = el.value; return; }
+  if (el.dataset.fo && S.folderEdit) { S.folderEdit.name = el.value; return; }
+  if (el.dataset.in === 'kbq') { S.kbQ = el.value; clearTimeout(logTimer); logTimer = setTimeout(async () => { try { await loadKb(); renderKeepFocus(); } catch (err) { toast(err.message, true); } }, 300); }
   if (el.dataset.in === 'logq') { S.logQ = el.value; clearTimeout(logTimer); logTimer = setTimeout(async () => { try { await loadLog(); renderKeepFocus(); } catch (err) { toast(err.message, true); } }, 300); }
 });
 $app.addEventListener('change', async e => {
@@ -939,6 +1423,13 @@ $app.addEventListener('change', async e => {
   if (el.dataset.t && S.T) { S.T[el.dataset.t] = el.value; if (el.dataset.rerender) render(); }
   if (el.dataset.in === 'loguser') { S.logUser = el.value; try { await loadLog(); render(); } catch (err) { toast(err.message, true); } }
   if (el.dataset.actChange === 'm-role-new') { const n = document.getElementById('m-name').value; S.mNewRole = el.value; render(); document.getElementById('m-name').value = n; }
+  if (el.dataset.sh && S.shiftEdit) S.shiftEdit[el.dataset.sh] = el.value;
+  if (el.dataset.h && S.hEdit) S.hEdit[el.dataset.h] = el.value;
+  if (el.dataset.kbPin !== undefined && S.kbEdit) S.kbEdit.pinned = el.checked;
+  if (el.dataset.foRole && S.folderEdit) { const id = el.dataset.foRole; S.folderEdit.roleIds = S.folderEdit.roleIds.filter(x => !same(x, id)); if (el.checked) S.folderEdit.roleIds.push(id); }
+  if (el.dataset.psel) { if (el.checked) delete S.pOff[el.dataset.psel]; else S.pOff[el.dataset.psel] = true; render(); }
+  if (el.dataset.in === 'upload' && el.files && el.files.length) { const files = [...el.files]; el.value = ''; uploadFiles(files); }
+  if (el.dataset.actChange === 'm-ctype') { const hrs = document.getElementById('m-chours'); if (hrs) { hrs.disabled = el.value === 'flex'; hrs.placeholder = el.value === 'flex' ? 'Niet van toepassing' : 'Bijv. 32'; if (el.value === 'flex') hrs.value = ''; } }
   if (el.dataset.actChange === 'm-role-edit') { const box = document.getElementById('m-perms'); if (box) box.innerHTML = permSummary(el.value); }
 });
 function runSearch() {
@@ -1019,6 +1510,13 @@ $app.addEventListener('click', async e => {
       case 'notif-allow': await Notification.requestPermission(); render(); return;
       case 'go-pool': S.cbTab = 'pool'; return;
       case 'hidecode': S.shownCode = null; render(); return;
+      case 'nav-group': {
+        if (el.dataset.locked) return;
+        const g = el.closest('.nav-group'); const open = g.classList.toggle('open');
+        el.setAttribute('aria-expanded', String(open));
+        prefs.navClosed = prefs.navClosed || {}; if (open) delete prefs.navClosed[el.dataset.v]; else prefs.navClosed[el.dataset.v] = true; savePrefs();
+        return;
+      }
       case 'menu': { const nav = el.closest('.nav'); const open = nav.classList.toggle('open'); el.setAttribute('aria-expanded', String(open)); el.textContent = open ? 'Sluiten' : 'Menu'; return; }
 
       case 'cb-tab': S.cbTab = el.dataset.v; S.cbSel = null; await loadCallbacks(); render(); return;
@@ -1104,6 +1602,116 @@ $app.addEventListener('click', async e => {
       case 'team-open': S.cbTab = can('callbacks.view_all') ? 'all' : 'mine'; S.cbQ = ''; S.cbResults = null; S.cbSel = num; go('terugbellen'); return;
       case 'stat-days': S.statDays = Number(el.dataset.v); S.stats = await rpc('cd_stats', { p_days: S.statDays }); render(); return;
 
+      // uren
+      case 'clock-in': await rpc('cd_hours_clock', { p_action: 'in' }); toast('Ingeklokt. Fijne dienst!'); break;
+      case 'clock-out': { const e2 = await rpc('cd_hours_clock', { p_action: 'out' }); toast('Uitgeklokt: ' + fmtHM(e2.minutes) + ' gewerkt. Vergeet je pauze niet in te vullen.'); break; }
+      case 'h-week': S.hWeek = el.dataset.v; S.hEdit = null; await loadHours(); render(); return;
+      case 'h-me': S.hMember = null; S.hEdit = null; await loadHours(); render(); return;
+      case 'h-add': {
+        const d = el.dataset.v; const sh = S.hours.shifts.find(x => x.date === d);
+        S.hEdit = { id: null, date: d, start: sh ? sh.start : '', end: sh ? sh.end : '', breakMin: sh && spanMin(sh.start, sh.end) > 330 ? 30 : 0, note: '' };
+        render(); const f = document.getElementById(sh ? 'h-break' : 'h-start'); if (f) f.focus(); return;
+      }
+      case 'h-edit': { const e2 = S.hours.entries.find(x => same(x.id, raw)); S.hEdit = { id: e2.id, date: e2.date, start: e2.start, end: e2.end || '', breakMin: e2.breakMin, note: e2.note || '' }; render(); return; }
+      case 'h-cancel': S.hEdit = null; render(); return;
+      case 'h-save': {
+        const E = S.hEdit;
+        if (!E.date || !E.start || !E.end) { toast('Vul een datum, begintijd en eindtijd in.', true); return; }
+        const saved = await rpc('cd_hours_save', { p_id: E.id || null, p: { date: E.date, start: E.start, end: E.end, breakMin: Number(E.breakMin) || 0, note: E.note } });
+        toast((E.id ? 'Aangepast: ' : 'Opgeslagen: ') + fmtHM(saved.minutes) + ' uur.');
+        S.hEdit = null; if (mondayOf(E.date) !== S.hWeek) S.hWeek = mondayOf(E.date); break;
+      }
+      case 'h-del': if (!confirm('Deze uren verwijderen?')) return; await rpc('cd_hours_delete', { p_id: num }); toast('Verwijderd.'); break;
+      case 'h-submit': {
+        if (S.running && mondayOf(S.running.date) === S.hWeek && !confirm('Je bent nog ingeklokt. De lopende dienst wordt niet meegenomen. Toch indienen?')) return;
+        const d = await rpc('cd_hours_submit', { p_week: S.hWeek }); toast('Ingediend: ' + fmtHM(d.minutes) + ' uur in ' + d.count + (d.count === 1 ? ' regel.' : ' regels.')); break;
+      }
+      case 'h-reopen': if (!confirm('Deze goedgekeurde uren terugzetten naar concept? De medewerker kan ze dan weer aanpassen.')) return; await rpc('cd_hours_reopen', { p_id: num }); toast('Teruggezet naar concept.'); break;
+
+      // rooster
+      case 'ro-week': S.rosterWeek = el.dataset.v; S.shiftEdit = null; break;
+      case 'sh-new': {
+        const prev = S.shiftEdit;
+        S.shiftEdit = { id: null, memberId: raw, date: el.dataset.v, start: prev && !prev.id ? prev.start : '09:00', end: prev && !prev.id ? prev.end : '17:00', note: prev && !prev.id ? prev.note : '' };
+        render(); window.scrollTo(0, 0); return;
+      }
+      case 'sh-edit': { const s2 = S.roster.shifts.find(x => same(x.id, raw)); S.shiftEdit = Object.assign({}, s2, { memberId: s2.memberId, note: s2.note || '' }); render(); window.scrollTo(0, 0); return; }
+      case 'sh-cancel': S.shiftEdit = null; render(); return;
+      case 'sh-save': {
+        const E = S.shiftEdit;
+        await rpc('cd_shift_save', { p_id: E.id || null, p: { memberId: E.memberId, date: E.date, start: E.start, end: E.end, note: E.note } });
+        toast(E.id ? 'Dienst gewijzigd.' : 'Dienst ingepland.');
+        if (E.id) S.shiftEdit = null; else S.shiftEdit = Object.assign({}, E, { date: addDays(E.date, 1) <= addDays(S.rosterWeek, 6) ? addDays(E.date, 1) : E.date });
+        break;
+      }
+      case 'sh-del': if (!confirm('Deze dienst verwijderen?')) return; await rpc('cd_shift_delete', { p_id: num }); S.shiftEdit = null; toast('Dienst verwijderd.'); break;
+
+      // goedkeuren
+      case 'p-view': S.hMember = raw; S.hWeek = el.dataset.v; S.hKeep = true; go('uren'); return;
+      case 'p-reject-open': S.rejectFor = el.dataset.v; render(); { const f = document.getElementById('rej-reason'); if (f) f.focus(); } return;
+      case 'p-reject-cancel': S.rejectFor = null; render(); return;
+      case 'p-approve': case 'p-reject': {
+        const g = pendingGroups().find(x => x.key === el.dataset.v); if (!g) return;
+        const ids = g.entries.filter(e2 => !S.pOff[e2.id]).map(e2 => e2.id);
+        const reason = act === 'p-reject' ? (document.getElementById('rej-reason') || {}).value || '' : null;
+        if (act === 'p-reject' && !reason.trim()) { toast('Geef een reden op, dan weet ' + g.name + ' wat er moet worden aangepast.', true); return; }
+        const d = await rpc('cd_hours_review', { p_ids: ids, p_approve: act === 'p-approve', p_reason: reason });
+        toast((act === 'p-approve' ? 'Goedgekeurd: ' : 'Afgekeurd: ') + d.count + (d.count === 1 ? ' regel van ' : ' regels van ') + g.name + '.');
+        S.rejectFor = null; break;
+      }
+
+      // urenoverzicht
+      case 'rep-period': S.repPeriod = el.dataset.v; if (S.repPeriod === 'eigen') { render(); return; } break;
+      case 'rep-custom': {
+        const f = document.getElementById('rep-from').value, t = document.getElementById('rep-to').value;
+        if (!f || !t) { toast('Kies een begin- en einddatum.', true); return; }
+        S.repFrom = f; S.repTo = t; break;
+      }
+      case 'rep-csv': exportCsv(); return;
+
+      // kennisbank
+      case 'kb-cat': S.kbCat = el.dataset.v; break;
+      case 'kb-sel': S.kbSel = num; S.kbEdit = null; S.kbArticle = await rpc('cd_kb_get', { p_id: num }); render(); if (window.innerWidth < 900) { const d = document.querySelector('.detail'); if (d) d.scrollIntoView({ behavior: 'smooth' }); } return;
+      case 'kb-new': S.kbEdit = { id: null, title: '', category: S.kbCat || '', body: '', pinned: false }; render(); document.getElementById('kb-title').focus(); return;
+      case 'kb-edit': { const A = S.kbArticle; S.kbEdit = { id: A.id, title: A.title, category: A.category, body: A.body, pinned: A.pinned }; render(); return; }
+      case 'kb-cancel': S.kbEdit = null; render(); return;
+      case 'kb-save': {
+        const E = S.kbEdit;
+        if (E.title.trim().length < 2) { toast('Geef het artikel een titel.', true); return; }
+        const a = await rpc('cd_kb_save', { p_id: E.id || null, p: { title: E.title, category: E.category, body: E.body, pinned: !!E.pinned } });
+        toast(E.id ? 'Artikel opgeslagen.' : 'Artikel gepubliceerd.'); S.kbEdit = null; S.kbSel = a.id; break;
+      }
+      case 'kb-del': if (!confirm('Dit artikel verwijderen? Dit kan niet ongedaan worden gemaakt.')) return; await rpc('cd_kb_delete', { p_id: S.kbSel }); S.kbSel = null; S.kbArticle = null; toast('Artikel verwijderd.'); break;
+
+      // documenten
+      case 'doc-folder': e.preventDefault(); S.docFolder = el.dataset.v || null; S.folderEdit = null; await loadDocs(); render(); window.scrollTo(0, 0); return;
+      case 'doc-dl': {
+        const d = S.docs.docs.find(x => same(x.id, raw));
+        const { data, error } = await sb.storage.from('crewdeck').createSignedUrl(d.path, 120, { download: d.name });
+        if (error || !data) throw new Error('Downloaden lukt niet: ' + (error ? error.message : 'onbekende fout'));
+        const a = document.createElement('a'); a.href = data.signedUrl; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); return;
+      }
+      case 'doc-del': {
+        const d = S.docs.docs.find(x => same(x.id, raw));
+        if (!confirm('"' + d.name + '" verwijderen?')) return;
+        const r2 = await rpc('cd_doc_delete', { p_id: raw });
+        try { await sb.storage.from('crewdeck').remove([r2.path]); } catch (err) { /* het bestand is al onzichtbaar */ }
+        toast('Document verwijderd.'); break;
+      }
+      case 'fo-new': S.folderEdit = { id: null, name: '', roleIds: [] }; render(); document.getElementById('fo-name').focus(); return;
+      case 'fo-edit': { const F = S.docs.folder; S.folderEdit = { id: F.id, name: F.name, roleIds: (F.roleIds || []).slice() }; render(); return; }
+      case 'fo-cancel': S.folderEdit = null; render(); return;
+      case 'fo-save': {
+        const E = S.folderEdit;
+        if (!E.name.trim()) { toast('Geef de map een naam.', true); return; }
+        const f = await rpc('cd_folder_save', { p_id: E.id || null, p: { name: E.name, roleIds: E.roleIds } });
+        toast(E.id ? 'Map opgeslagen.' : 'Map gemaakt.'); S.folderEdit = null; S.docFolder = f.id; break;
+      }
+      case 'fo-del': {
+        if (!confirm('Deze map verwijderen? Dat kan alleen als hij leeg is.')) return;
+        await rpc('cd_folder_delete', { p_id: S.folderEdit.id }); S.folderEdit = null; S.docFolder = null; toast('Map verwijderd.'); break;
+      }
+
       // mensen
       case 'm-sel': S.mSel = raw; S.mNew = false; render(); return;
       case 'm-new': S.mNew = true; S.mNewRole = null; render(); document.getElementById('m-name').focus(); return;
@@ -1123,6 +1731,13 @@ $app.addEventListener('click', async e => {
         if (role) p.roleId = role.value;
         if (active) p.active = active.checked;
         await rpc('cd_member_update', { p_id: raw, p });
+        const ct = document.getElementById('m-ctype');
+        if (ct) {
+          const u = S.members.find(x => same(x.id, raw));
+          const hrs = ct.value === 'flex' ? 0 : Number(String(document.getElementById('m-chours').value).replace(',', '.'));
+          if (ct.value === 'vast' && (!isFinite(hrs) || hrs < 0 || hrs > 80)) throw new Error('Vul bij een vast contract 0 tot 80 uur per week in.');
+          if (!u || u.contractType !== ct.value || Number(u.contractHours) !== hrs) await rpc('cd_member_contract', { p_id: raw, p_type: ct.value, p_hours: hrs });
+        }
         toast('Opgeslagen.');
         if (same(raw, S.me.id)) await loadSession();
         await loadPeople(); render(); return;
@@ -1176,7 +1791,8 @@ setInterval(async () => {
   const r = route(); const a = document.activeElement;
   const typing = a && /INPUT|TEXTAREA|SELECT/.test(a.tagName);
   try {
-    if (['overzicht', 'terugbellen', 'taken', 'team'].includes(r) && !typing && !document.hidden) {
+    const editing = S.hEdit || S.shiftEdit || S.rejectFor;
+    if (['overzicht', 'terugbellen', 'taken', 'team', 'uren', 'goedkeuren', 'rooster'].includes(r) && !typing && !editing && !document.hidden) {
       const y = window.scrollY; await loadRoute(); render(); window.scrollTo(0, y);
     } else {
       await loadCounts();
@@ -1184,6 +1800,12 @@ setInterval(async () => {
     }
   } catch (e) { /* stil */ }
 }, 20000);
+
+// lopende klok bijwerken zonder het scherm opnieuw te tekenen
+setInterval(() => {
+  const el = document.getElementById('clock-elapsed');
+  if (el) el.textContent = fmtHM(runningSince({ date: el.dataset.date, start: el.dataset.start }));
+}, 15000);
 
 // ---------- start ----------
 (async function start() {
