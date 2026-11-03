@@ -217,8 +217,10 @@ function beep() {
   } catch (e) { /* */ }
 }
 const canSysNotify = () => 'Notification' in window && window.isSecureContext;
+const APP = window.CrewdeckApp || null; // de Android-app geeft deze brug mee
 function notify(title, body) {
   beep(); toast(title + (body ? ': ' + body : ''));
+  if (APP && document.hidden) { try { APP.notify(title, body || ''); } catch (e) { /* */ } }
   if (canSysNotify() && Notification.permission === 'granted' && document.hidden) { try { new Notification(title, { body, icon: 'icon.svg' }); } catch (e) { /* */ } }
 }
 function updateTitle() {
@@ -249,6 +251,7 @@ async function onRoute() {
     render(); return;
   }
   if (r === 'login' || r === 'registreren') { go('overzicht'); return; }
+  if (APP && typeof loadMobile === 'function') { try { await loadMobile(); } catch (e) { toast(e.message, true); } render(); return; }
   if (!allowed(r)) { go('overzicht'); return; }
   if (r === 'uren' && !S.hKeep) { S.hMember = null; }
   S.hKeep = false;
@@ -354,12 +357,14 @@ async function loadPeople() {
 // ---------- render ----------
 function render() {
   const r = route();
+  if (APP && APP.keepAwake) { try { APP.keepAwake(r === 'klok'); } catch (e) { /* */ } }
   if (r === 'klok') { document.title = 'Prikklok · Crewdeck'; $app.innerHTML = viewKiosk(); return; }
   if (!S.me) {
     document.title = 'Crewdeck';
     $app.innerHTML = r === 'registreren' ? viewRegister() : viewLogin();
     return;
   }
+  if (APP && typeof viewMobile === 'function') { $app.innerHTML = viewMobile(); updateTitle(); return; }
   const views = { overzicht: viewHome, terugbellen: viewCallbacks, verzoek: viewCallbackForm, taken: viewTasks, taak: viewTaskForm, team: viewTeam,
     cijfers: viewStats, logboek: viewLog, mensen: viewMembers, rollen: viewRoles, instellingen: viewSettings,
     uren: viewHours, rooster: viewRoster, prikklok: viewKioskAdmin, verlof: viewAbsence, beschikbaar: viewAvailability, meldingen: viewNotifications, goedkeuren: viewApprove, urenoverzicht: viewReport, kennisbank: viewKb, documenten: viewDocs };
@@ -1434,6 +1439,10 @@ function exportCsv() {
     rows.push([]); rows.push(['Afwezigheid', 'Van', 'Tot en met', '', 'Werkdagen', '', 'Soort', 'Toelichting']);
     R.absences.forEach(a => rows.push([a.memberName, a.from, a.to || '(loopt nog)', '', a.workdays, '', a.kindLabel, a.note]));
   }
+  if (APP && APP.saveText) {
+    const where = APP.saveText('uren-' + R.from + '-tm-' + R.to + '.csv', '\ufeff' + rows.map(r => r.map(q).join(';')).join('\r\n'), 'text/csv');
+    toast(where ? 'Opgeslagen in ' + where : 'Opslaan is niet gelukt.', !where); return;
+  }
   const blob = new Blob(['﻿' + rows.map(r => r.map(q).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'uren-' + R.from + '-tm-' + R.to + '.csv';
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
@@ -1544,7 +1553,7 @@ function viewKiosk() {
     const goingIn = !P || !P.in;
     body = '<div class="kiosk-pad"><button class="btn ghost" data-act="k-cancel">' + ICON.left + 'Terug</button>' +
       '<div class="kiosk-who">' + avatar(P.id, P.name, 'xl') + '<div><h1>' + esc(P.name) + '</h1><p>' + (goingIn ? 'Inklokken' + (P.shift ? ' · ingepland ' + esc(P.shift) : '') : 'Uitklokken · binnen sinds ' + esc(P.in)) + '</p></div></div>' +
-      '<label class="kiosk-label" id="k-lab">Voer je code in</label>' +
+      '<label class="kiosk-label" id="k-lab">Voer je code in, of de klokcode uit de Crewdeck-app</label>' +
       '<div class="kiosk-dots' + (K.err ? ' bad' : '') + '" aria-labelledby="k-lab" aria-live="polite">' + (K.code ? K.code.split('').map(() => '<span></span>').join('') : '<em>••••••</em>') + '</div>' +
       (K.err ? '<p class="kiosk-err" role="alert">' + esc(K.err) + '</p>' : '') +
       '<div class="keypad">' + ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'].map(k =>
@@ -2482,6 +2491,12 @@ $app.addEventListener('click', async e => {
 // ---------- automatisch verversen (elke 20 seconden) ----------
 setInterval(async () => {
   if (!S.me || dragId != null) return;
+  if (typeof isMobileApp === 'function' && isMobileApp()) {
+    const ae = document.activeElement;
+    if (!(ae && /INPUT|TEXTAREA/.test(ae.tagName)) && !document.hidden) { try { await loadMobile(); render(); } catch (e) { /* stil */ } }
+    else { try { await loadCounts(); } catch (e) { /* stil */ } }
+    return;
+  }
   const r = route(); const a = document.activeElement;
   const typing = a && /INPUT|TEXTAREA|SELECT/.test(a.tagName);
   try {
