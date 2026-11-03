@@ -648,3 +648,25 @@ td.rc.absent { background: #FAF8FF; }
 .m-link span { color: var(--muted); font-weight: 500; }
 .m-link svg { color: var(--muted); }
 .m-link.danger { color: var(--red); }
+
+/* ---------- Crewdeck Beheer ---------- */
+.adm { min-height: 100vh; }
+.adm-top { background: var(--navy); color: #fff; padding: 14px 32px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.adm-brand { display: flex; align-items: center; gap: 10px; font-size: 18px; }
+.adm-brand span { color: var(--nav-text); font-weight: 400; }
+.adm-me { display: flex; align-items: center; gap: 12px; font-size: 14px; color: var(--nav-text); }
+.adm-me .btn.ghost { background: var(--navy-2); color: #fff; }
+.adm-main { max-width: 1040px; margin: 0 auto; padding: 28px 32px 64px; display: flex; flex-direction: column; gap: 18px; }
+.adm-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.adm-list { display: flex; flex-direction: column; gap: 12px; }
+.adm-req, .adm-org, .adm-create, .adm-done { display: flex; flex-direction: column; gap: 14px; }
+.adm-org.blocked { border-color: #FDA29B; background: #FFFBFA; }
+.adm-done { border: 2px solid var(--accent); }
+.adm-done textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+.adm-log { display: grid; grid-template-columns: 140px 120px 1fr; gap: 12px; font-size: 14px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.adm-log:last-child { border-bottom: 0; }
+@media (max-width: 640px) {
+  .adm-top { padding: 12px 16px; } .adm-main { padding: 20px 16px 48px; }
+  .adm-log { grid-template-columns: 1fr; gap: 2px; }
+}
+.adm .item-top > .row { align-items: center; }

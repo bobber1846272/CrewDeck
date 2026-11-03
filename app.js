@@ -25,7 +25,7 @@ const TIMEZONES = ['Europe/Amsterdam', 'Europe/Brussels', 'Europe/Berlin', 'Euro
 
 const S = {
   me: null, org: null, perms: new Set(), roleName: '',
-  authError: null, regInfo: null,
+  authError: null, regInfo: null, requestSent: null,
   counts: { mine: 0, pool: 0, tasks: 0 }, myCbs: [], poolCbs: [], myTasks: [], weekStats: null,
   seen: null, quiet: false, colleagues: [],
   cbTab: 'mine', cbList: [], cbSel: null, cbQ: '', cbResults: null,
@@ -398,12 +398,34 @@ function viewLogin() {
       '<div class="field"><label for="l-name">Naam</label><input class="input" id="l-name" name="name" autocomplete="username" required></div>' +
       '<div class="field"><label for="l-code">Code</label><input class="input code-input" id="l-code" name="code" type="password" inputmode="numeric" autocomplete="current-password" required></div>' +
       '<button class="btn primary" type="submit" id="l-submit">Inloggen</button>' +
-      '<p class="switch">Nieuw bij Crewdeck? <a href="#/registreren">Registreer je bedrijf</a></p>' +
+      '<p class="switch">Nieuw bij Crewdeck? <a href="#/registreren">' + (S.regInfo && S.regInfo.request === false ? 'Registreer je bedrijf' : 'Vraag Crewdeck aan') + '</a></p>' +
     '</form></section></div>';
 }
 function viewRegister() {
   const info = S.regInfo || { open: false };
   let form;
+  if (info.request) {
+    if (S.requestSent) {
+      form = '<div class="login-card" style="max-width:460px"><h2>Aanvraag ontvangen</h2>' +
+        '<div class="alert info"><span>Bedankt! We nemen je aanvraag zo snel mogelijk in behandeling. Je krijgt van ons je <strong>bedrijfscode</strong> en de inloggegevens van de eigenaar op <strong>' + esc(S.requestSent) + '</strong>.</span></div>' +
+        '<p class="switch"><a href="#/login">Terug naar inloggen</a></p></div>';
+    } else {
+      form = '<form class="login-card" data-form="request" novalidate style="max-width:460px">' +
+        '<div><h2>Crewdeck aanvragen</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Wij zetten je bedrijf klaar en sturen je de bedrijfscode en de inloggegevens van de eigenaar.</p></div>' +
+        (S.authError ? '<div class="alert error" role="alert">' + ICON.alert + '<span>' + esc(S.authError) + '</span></div>' : '') +
+        '<div class="field"><label for="q-company">Bedrijfsnaam</label><input class="input" id="q-company" name="company" autocomplete="organization" required></div>' +
+        '<div class="field"><label for="q-name">Jouw naam</label><input class="input" id="q-name" name="contactName" autocomplete="name" required></div>' +
+        '<div class="field"><label for="q-email">E-mailadres</label><input class="input" id="q-email" name="email" type="email" autocomplete="email" required></div>' +
+        '<div class="grid2"><div class="field"><label for="q-phone">Telefoon <span class="muted">(optioneel)</span></label><input class="input" id="q-phone" name="phone" type="tel" autocomplete="tel"></div>' +
+        '<div class="field"><label for="q-emp">Aantal medewerkers</label><select class="input" id="q-emp" name="employees"><option value="">Kies…</option>' +
+          ['1-5', '6-15', '16-50', '51-100', '100+'].map(o => '<option>' + o + '</option>').join('') + '</select></div></div>' +
+        '<div class="field"><label for="q-msg">Toelichting <span class="muted">(optioneel)</span></label><textarea class="input" id="q-msg" name="message" rows="3" placeholder="Waarvoor wil je Crewdeck gebruiken?"></textarea></div>' +
+        '<div class="honeypot" aria-hidden="true"><label for="q-web">Website</label><input id="q-web" name="website" tabindex="-1" autocomplete="off"></div>' +
+        '<button class="btn primary" type="submit" id="q-submit">Aanvraag versturen</button>' +
+        '<p class="switch">Al een account? <a href="#/login">Inloggen</a></p></form>';
+    }
+    return '<div class="login">' + brandPanel('Begin met Crewdeck.', 'Vraag Crewdeck aan voor je bedrijf. Wij zetten alles voor je klaar.') + '<section class="login-main">' + form + '</section></div>';
+  }
   if (!info.open) {
     form = '<div class="login-card"><h2>Registreren</h2><div class="alert info"><span>Op deze server kunnen geen nieuwe bedrijven worden aangemaakt. Vraag je beheerder om een account.</span></div>' +
       '<p class="switch"><a href="#/login">Terug naar inloggen</a></p></div>';
@@ -1907,6 +1929,12 @@ $app.addEventListener('submit', async e => {
       const d = await svc('login', { company, name, code });
       await sb.auth.setSession(d.session);
       try { localStorage.setItem('crewdeck-company', company); } catch (err) { /* */ }
+    } else if (f.dataset.form === 'request') {
+      const v = k => (f.elements[k] ? f.elements[k].value.trim() : '');
+      const email = v('email');
+      await svc('request', { company: v('company'), contactName: v('contactName'), email, phone: v('phone'), employees: v('employees'), message: v('message'), website: v('website') });
+      S.requestSent = email; S.authError = null; render();
+      return;
     } else {
       const v = k => (f.elements[k] ? f.elements[k].value.trim() : '');
       const d = await svc('register', { orgName: v('orgName'), slug: v('slug').toLowerCase(), ownerName: v('ownerName'), code: v('code'), website: v('website') });
