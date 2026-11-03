@@ -15,7 +15,7 @@ const PERM_GROUPS = [
     ['callbacks.edit_all', 'Alle verzoeken bewerken'], ['callbacks.delete', 'Verzoeken verwijderen']]],
   ['Taken', [['tasks.create', 'Taken aanmaken'], ['tasks.assign', 'Taken aan anderen geven'], ['tasks.view_all', 'Alle taken zien'],
     ['tasks.edit_all', 'Alle taken bewerken'], ['tasks.delete', 'Taken verwijderen']]],
-  ['Uren', [['hours.view_all', 'Uren van iedereen zien'], ['hours.approve', 'Uren goedkeuren'], ['hours.plan', 'Rooster plannen'], ['hours.kiosk', 'Prikklok instellen']]],
+  ['Uren', [['hours.view_all', 'Uren van iedereen zien'], ['hours.approve', 'Uren en verlof goedkeuren'], ['hours.plan', 'Rooster plannen'], ['hours.kiosk', 'Prikklok instellen'], ['hours.kiosk_exit', 'Prikklok verlaten met eigen code']]],
   ['Kennis & documenten', [['kb.edit', 'Kennisbank bewerken'], ['docs.upload', 'Documenten uploaden'], ['docs.manage', 'Mappen en documenten beheren']]],
   ['Teamleiding', [['team.board', 'Teambord'], ['reports.view', 'Cijfers'], ['audit.view', 'Logboek']]],
   ['Beheer', [['members.manage', 'Medewerkers beheren'], ['roles.manage', 'Rollen en rechten beheren'], ['org.manage', 'Bedrijfsinstellingen']]]
@@ -41,9 +41,11 @@ const S = {
   kb: null, kbQ: '', kbCat: '', kbSel: null, kbArticle: null, kbEdit: null,
   docs: null, docFolder: null, folderEdit: null, uploading: null,
   mTab: 'actief', offboard: null, kiosks: null, kioskName: '',
-  rosterView: 'week', rosterMonth: null, rosterWho: ''
+  rosterView: 'week', rosterMonth: null, rosterWho: '', rosterCompare: false, tplOpen: false, tplEdit: null,
+  abs: null, absForm: null, absReject: null, absPending: 0, av: null, avRoster: null, avMonth: null, avSel: {}, avEdit: null,
+  notif: null, notifSeen: null, notifUnreadIds: null
 };
-const K = { info: null, error: null, sel: null, code: '', busy: false, result: null, q: '', last: 0 };
+const K = { info: null, error: null, sel: null, code: '', busy: false, result: null, q: '', last: 0, taps: [], exit: null };
 const kioskToken = () => { try { return localStorage.getItem('crewdeck-kiosk') || ''; } catch (e) { return ''; } };
 const can = p => S.perms.has(p);
 const same = (a, b) => a != null && b != null && String(a) === String(b);
@@ -179,6 +181,9 @@ const NI = (() => {
     rooster: i('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
     goedkeuren: i('<path d="M20 6 9 17l-5-5"/>'),
     urenoverzicht: i('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+    meldingen: i('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/>'),
+    beschikbaar: i('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="m9 15 2 2 4-4"/>'),
+    verlof: i('<path d="M12 3v2M5.6 5.6 7 7M3 12h2M19 12h2M17 7l1.4-1.4"/><path d="M8 14a4 4 0 0 1 8 0"/><path d="M3 18h18M6 21h12"/>'),
     prikklok: i('<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01M9 6h6M9 10h6"/>'),
     kennisbank: i('<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/><path d="M9 7h6"/>'),
     documenten: i('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
@@ -217,12 +222,12 @@ function notify(title, body) {
   if (canSysNotify() && Notification.permission === 'granted' && document.hidden) { try { new Notification(title, { body, icon: 'icon.svg' }); } catch (e) { /* */ } }
 }
 function updateTitle() {
-  const n = S.counts.mine + S.counts.tasks;
+  const n = S.counts.mine + S.counts.tasks + (S.notif ? S.notif.unread : 0);
   document.title = (n ? '(' + n + ') ' : '') + 'Crewdeck' + (S.org ? ' · ' + S.org.name : '');
 }
 
 // ---------- routes ----------
-const ROUTES = ['overzicht', 'terugbellen', 'verzoek', 'taken', 'taak', 'uren', 'rooster', 'goedkeuren', 'urenoverzicht', 'prikklok', 'klok', 'kennisbank', 'documenten',
+const ROUTES = ['overzicht', 'terugbellen', 'verzoek', 'taken', 'taak', 'uren', 'rooster', 'goedkeuren', 'urenoverzicht', 'prikklok', 'klok', 'verlof', 'beschikbaar', 'meldingen', 'kennisbank', 'documenten',
   'team', 'cijfers', 'logboek', 'mensen', 'rollen', 'instellingen', 'login', 'registreren'];
 const ROUTE_PERM = { team: 'team.board', cijfers: 'reports.view', logboek: 'audit.view', instellingen: null, goedkeuren: 'hours.approve', urenoverzicht: 'hours.view_all', prikklok: 'hours.kiosk',
   mensen: ['members.manage', 'roles.manage'], rollen: ['members.manage', 'roles.manage'] };
@@ -249,6 +254,8 @@ async function onRoute() {
   S.hKeep = false;
   if (r !== 'uren') S.hEdit = null;
   if (r !== 'rooster') S.shiftEdit = null;
+  if (r !== 'verlof') { S.absForm = null; S.absReject = null; }
+  if (r !== 'beschikbaar') S.avSel = {};
   if (r !== 'documenten') S.folderEdit = null;
   try {
     if (r === 'verzoek' || r === 'taak') {
@@ -293,14 +300,27 @@ async function loadRoute() {
   if (r === 'goedkeuren') jobs.push(rpc('cd_hours_pending').then(d => { S.pending = d; }));
   if (r === 'urenoverzicht') jobs.push(loadReport());
   if (r === 'prikklok') jobs.push(rpc('cd_kiosks').then(d => { S.kiosks = d; }));
+  if (r === 'verlof') jobs.push(loadAbsences());
+  if (r === 'beschikbaar') jobs.push(loadAvailability());
   if (r === 'kennisbank') jobs.push(loadKb());
   if (r === 'documenten') jobs.push(loadDocs());
   await Promise.all(jobs);
+  if (r === 'meldingen' && S.notif) {
+    S.notifUnreadIds = new Set(S.notif.items.filter(n => !n.read).map(n => n.id));
+    if (S.notif.unread) { await rpc('cd_notifications_read'); S.notif.unread = 0; S.notif.items.forEach(n => { n.read = true; }); }
+  }
 }
 async function loadCounts() {
   const [a, b, c, w, p] = await Promise.all([rpc('cd_callbacks', { p_scope: 'mine' }), rpc('cd_callbacks', { p_scope: 'pool' }), rpc('cd_tasks', { p_scope: 'mine' }),
     rpc('cd_hours_week', { p_member: null, p_week: null }), can('hours.approve') ? rpc('cd_hours_pending') : Promise.resolve([])]);
   S.nowWeek = w; S.running = w.running; S.pendingCount = p.length;
+  try {
+    const [nt, pl] = await Promise.all([rpc('cd_notifications'), can('hours.approve') ? rpc('cd_absences', { p_scope: 'pending' }) : Promise.resolve([])]);
+    S.absPending = pl.length;
+    const fresh = nt.items.filter(n => !n.read && S.notifSeen && !S.notifSeen.has(n.id));
+    if (fresh.length && !S.quiet) notify(fresh.length === 1 ? 'Nieuwe melding' : fresh.length + ' nieuwe meldingen', fresh.slice(0, 2).map(n => n.text).join(' · '));
+    S.notifSeen = new Set(nt.items.map(n => n.id)); S.notif = nt;
+  } catch (e) { /* meldingen zijn niet kritisch */ }
   const openTasks = c.filter(t => !t.done && !t.mineDone && !t.archived);
   S.myCbs = a; S.poolCbs = b; S.myTasks = c;
   S.counts = { mine: a.length, pool: b.length, tasks: openTasks.length };
@@ -342,7 +362,7 @@ function render() {
   }
   const views = { overzicht: viewHome, terugbellen: viewCallbacks, verzoek: viewCallbackForm, taken: viewTasks, taak: viewTaskForm, team: viewTeam,
     cijfers: viewStats, logboek: viewLog, mensen: viewMembers, rollen: viewRoles, instellingen: viewSettings,
-    uren: viewHours, rooster: viewRoster, prikklok: viewKioskAdmin, goedkeuren: viewApprove, urenoverzicht: viewReport, kennisbank: viewKb, documenten: viewDocs };
+    uren: viewHours, rooster: viewRoster, prikklok: viewKioskAdmin, verlof: viewAbsence, beschikbaar: viewAvailability, meldingen: viewNotifications, goedkeuren: viewApprove, urenoverzicht: viewReport, kennisbank: viewKb, documenten: viewDocs };
   $app.innerHTML = '<div class="shell">' + viewNav(r) + '<main class="main' + (r === 'team' || r === 'rooster' ? ' wide' : '') + '" id="main">' + (views[r] || viewHome)() + '</main></div>';
   updateTitle();
 }
@@ -402,8 +422,8 @@ function viewRegister() {
 // ----- navigatie (groepen die je kunt in- en uitklappen) -----
 function navGroups() {
   const G = [
-    { id: 'werk', label: 'Werk', items: [['overzicht', 'Overzicht'], ['terugbellen', 'Terugbellen', S.counts.mine], ['taken', 'Taken', S.counts.tasks]] },
-    { id: 'uren', label: 'Uren', items: [['uren', 'Mijn uren', 0, S.running ? 'live' : ''], ['rooster', 'Rooster'],
+    { id: 'werk', label: 'Werk', items: [['meldingen', 'Meldingen', S.notif ? S.notif.unread : 0], ['terugbellen', 'Terugbellen', S.counts.mine], ['taken', 'Taken', S.counts.tasks]] },
+    { id: 'uren', label: 'Uren', items: [['uren', 'Mijn uren', 0, S.running ? 'live' : ''], ['rooster', 'Rooster'], ['beschikbaar', 'Beschikbaarheid'], ['verlof', 'Verlof & ziek', S.absPending],
       can('hours.approve') ? ['goedkeuren', 'Goedkeuren', S.pendingCount] : null, can('hours.view_all') ? ['urenoverzicht', 'Urenoverzicht'] : null, can('hours.kiosk') ? ['prikklok', 'Prikklok'] : null] },
     { id: 'kennis', label: 'Kennis', items: [['kennisbank', 'Kennisbank'], ['documenten', 'Documenten']] },
     { id: 'leiding', label: 'Teamleiding', items: [can('team.board') ? ['team', 'Teambord'] : null, can('reports.view') ? ['cijfers', 'Cijfers'] : null, can('audit.view') ? ['logboek', 'Logboek'] : null] },
@@ -431,7 +451,7 @@ function viewNav(r) {
   return '<nav class="nav" aria-label="Hoofdmenu">' +
     '<div class="nav-top"><div class="nav-brand">' + LOGO(26) + '<div class="nav-org">' + esc(S.org.name) + '</div></div>' +
     '<button class="menu-btn" data-act="menu" aria-expanded="false" aria-controls="nav-links">Menu</button></div>' +
-    '<div class="nav-links" id="nav-links">' + groups + '</div>' +
+    '<div class="nav-links" id="nav-links"><div class="nav-home">' + link(['overzicht', 'Overzicht']) + '</div>' + groups + '</div>' +
     '<div class="nav-user">' +
       (S.running ? '<a class="nav-clock" href="#/uren">' + '<span class="live-dot"></span>Ingeklokt sinds ' + esc(S.running.start) + '</a>' : '') +
       '<div class="nav-user-row">' + avatar(S.me.id, S.me.name) +
@@ -815,7 +835,7 @@ const LOG_LABEL = { 'verzoek-nieuw': ['Nieuw', 'blue'], 'verzoek-bewerkt': ['Bew
   'medewerker-nieuw': ['Medewerker', 'dark'], 'medewerker-bewerkt': ['Medewerker', 'dark'], 'medewerker-code': ['Code', 'dark'], 'rol-nieuw': ['Rol', 'dark'], 'rol-bewerkt': ['Rol', 'dark'],
   'rol-verwijderd': ['Rol', 'red'], 'bedrijf-nieuw': ['Bedrijf', 'dark'], 'bedrijf-bewerkt': ['Bedrijf', 'dark'],
   'uren-ingediend': ['Uren ingediend', 'blue'], 'uren-goedgekeurd': ['Uren goed', 'green'], 'uren-afgekeurd': ['Uren afgekeurd', 'red'], 'uren-heropend': ['Uren terug', 'orange'],
-  'rooster': ['Rooster', ''], 'medewerker-uitdienst': ['Uit dienst', 'red'], 'medewerker-vertrek': ['Vertrek', 'orange'], 'medewerker-terug': ['Weer in dienst', 'green'], 'prikklok': ['Prikklok', ''], 'kennisbank': ['Kennisbank', ''], 'documenten': ['Documenten', ''] };
+  'rooster': ['Rooster', ''], 'medewerker-uitdienst': ['Uit dienst', 'red'], 'medewerker-vertrek': ['Vertrek', 'orange'], 'verlof': ['Verlof', 'blue'], 'ziek': ['Ziek', 'red'], 'medewerker-terug': ['Weer in dienst', 'green'], 'prikklok': ['Prikklok', ''], 'kennisbank': ['Kennisbank', ''], 'documenten': ['Documenten', ''] };
 function viewLog() {
   const L = S.log;
   let h = '<header class="page-head"><div><h1>Logboek</h1><p>Wie wat heeft aangemaakt, gewijzigd, toegewezen of afgerond.</p></div></header>' +
@@ -1108,6 +1128,7 @@ function viewHours() {
     (!self ? '<div class="actions"><button class="btn" data-act="h-me">' + ICON.left + 'Mijn eigen uren</button></div>' : '') + '</header>';
   h += weekNav('h-week', mon);
   if (self && mon === mondayOf(today())) h += clockCard();
+  if (self && H.published === false && !can('hours.plan')) h += '<p class="small muted" style="margin:0">Het rooster voor deze week is nog niet vastgezet. Je diensten verschijnen hier zodra het klaar is.</p>';
   const diff = H.totalMin - ch;
   h += '<div class="stats">' + stat('Gewerkt', fmtHM(H.totalMin)) + stat('Ingepland', fmtHM(planned)) +
     stat('Contract', ct === 'flex' ? 'Flex' : (ch ? fmtHM(ch) : '–')) +
@@ -1121,6 +1142,7 @@ function viewHours() {
     const adding = S.hEdit && !S.hEdit.id && S.hEdit.date === d;
     return '<section class="day' + (d === H.today ? ' today' : '') + '"><div class="day-head"><div class="day-name"><strong>' + esc(dayLong(d)) + '</strong>' +
       (d === H.today ? '<span class="badge blue">Vandaag</span>' : '') +
+      ((H.absences || []).filter(a => absCovers(a, d)).map(a => absChip(a)).join('')) +
       (ss.length ? '<span class="small muted">Ingepland ' + ss.map(s => esc(s.start + '–' + s.end) + (s.note ? ' (' + esc(s.note) + ')' : '')).join(', ') + '</span>' : '') + '</div>' +
       '<span class="day-total">' + (tot ? fmtHM(tot) : '') + '</span></div>' +
       es.map(e => entryRow(e, self)).join('') + (adding ? entryForm() : '') +
@@ -1167,9 +1189,22 @@ function shiftForm(R) {
     '<div class="field"><label for="sh-start">Begin</label><input class="input" type="time" id="sh-start" data-sh="start" value="' + esc(E.start) + '"></div>' +
     '<div class="field"><label for="sh-end">Eind</label><input class="input" type="time" id="sh-end" data-sh="end" value="' + esc(E.end) + '"></div></div>' +
     (p && p.leavingOn ? '<p class="small" style="margin:0;color:var(--red)">' + esc(p.name) + ' vertrekt: de laatste werkdag is ' + esc(dayLong(p.leavingOn).toLowerCase()) + '.</p>' : '') +
+    (R.templates && R.templates.length ? '<div class="chips"><span class="small muted">Vaste dienst:</span>' + R.templates.map(t => '<button class="chip quick" data-act="sh-tpl" data-id="' + t.id + '">' + esc(t.name) + ' ' + esc(t.start + '–' + t.end) + '</button>').join('') + '</div>' : '') +
+    shiftWarnings(R, E) +
     '<div class="field"><label for="sh-note">Notitie <span class="muted" style="font-weight:400">(optioneel, bijv. balie of magazijn)</span></label><input class="input" id="sh-note" data-sh="note" maxlength="120" value="' + esc(E.note) + '"></div>' +
     '<div class="form-foot">' + (E.id ? '<button class="btn danger small" data-act="sh-del" data-id="' + E.id + '" style="margin-right:auto">' + ICON.trash + 'Verwijderen</button>' : '') +
     '<button class="btn small ghost" data-act="sh-cancel">Annuleren</button><button class="btn primary small" data-act="sh-save">' + (E.id ? 'Opslaan' : 'Inplannen') + '</button></div></section>';
+}
+function shiftWarnings(R, E) {
+  if (!E.memberId || !E.date) return '';
+  const w = [];
+  const ab = absFor(R.absences, E.memberId, E.date);
+  if (ab) w.push((ab.status === 'aangevraagd' ? 'Heeft ' + ab.kindLabel.toLowerCase() + ' aangevraagd' : 'Is ' + (ab.kind === 'ziek' ? 'ziek gemeld' : 'met ' + ab.kindLabel.toLowerCase())) + ' op deze dag.');
+  const av = (R.availability || []).find(x => same(x.memberId, E.memberId) && x.date === E.date);
+  if (av && av.status === 'kan_niet') w.push('Heeft aangegeven niet te kunnen' + (av.note ? ' (' + av.note + ')' : '') + '.');
+  if (av && av.status === 'kan' && av.start && E.start && E.end && (E.start < av.start || E.end > av.end)) w.push('Kan alleen van ' + av.start + ' tot ' + av.end + '.');
+  if (av && av.status === 'kan' && !w.length) return '<p class="small" style="margin:0;color:var(--green)">Heeft aangegeven te kunnen' + (av.start ? ' van ' + esc(av.start) + ' tot ' + esc(av.end) : '') + '.</p>';
+  return w.length ? '<div class="alert warn" style="padding:10px 14px"><span>' + w.map(esc).join(' ') + '</span></div>' : '';
 }
 function viewRoster() {
   const R = S.roster; if (!R) return '';
@@ -1187,11 +1222,57 @@ function viewRoster() {
       R.people.map(p => '<option value="' + p.id + '"' + (same(S.rosterWho, p.id) ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('') + '</select>';
   } else {
     h += weekNav('ro-week', R.weekStart);
+    if (R.canSeeWorked) h += '<label class="check compare-toggle"><input type="checkbox" data-in="rocompare"' + (S.rosterCompare ? ' checked' : '') + '> Vergelijk met gewerkt</label>';
   }
   h += '</div>';
+  if (!month) h += publishBanner(R);
   if (S.shiftEdit) h += shiftForm(R);
+  if (R.canPlan) h += templatesCard(R);
   if (!R.people.length) return h + '<div class="empty">Nog geen actieve medewerkers.</div>';
-  return h + (month ? rosterMonth(R) : rosterWeek(R));
+  return h + (month ? rosterMonth(R) : rosterWeek(R)) + (month ? '' : rosterLegend(R));
+}
+function weekPub(R, wk) { return (R.published || []).find(x => x.week === wk); }
+function publishBanner(R) {
+  const pub = weekPub(R, R.weekStart);
+  if (!R.canPlan) return pub || R.shifts.length ? '' : '<div class="alert info"><span>Het rooster voor deze week is nog niet klaar.</span></div>';
+  if (pub) return '<div class="pub-bar on"><span><strong>Vastgezet</strong>' + (pub.byName ? ' door ' + esc(pub.byName) : '') + ' · ' + esc(fmtDate(pub.at)) +
+    '. Iedereen ziet deze week. Wijzig je een dienst, dan krijgt die medewerker automatisch een melding.</span><button class="btn small ghost" data-act="ro-unpublish">Terug naar concept</button></div>';
+  return '<div class="pub-bar"><span><strong>Concept</strong> · alleen planners zien deze week. Zet hem vast als hij klaar is; iedereen met een dienst krijgt dan een melding.</span>' +
+    '<button class="btn small primary" data-act="ro-publish"' + (R.shifts.length ? '' : ' disabled') + '>Rooster vastzetten en versturen</button></div>';
+}
+function templatesCard(R) {
+  const open = !!S.tplOpen;
+  let h = '<section class="card tpl-card"><button class="tpl-head" data-act="tpl-toggle" aria-expanded="' + open + '"><span><strong>Vaste diensten</strong> <span class="small muted">' +
+    (R.templates.length ? R.templates.map(t => esc(t.name)).join(' · ') : 'Nog geen, bijvoorbeeld Ochtend 08:30–13:00') + '</span></span>' + ICON.chev + '</button>';
+  if (open) {
+    const E = S.tplEdit || { name: '', start: '', end: '', note: '' };
+    h += '<div class="tpl-list">' + R.templates.map(t => '<div class="tpl-item"><span class="shift">' + esc(t.name) + ' · ' + esc(t.start + '–' + t.end) + (t.note ? '<small>' + esc(t.note) + '</small>' : '') + '</span>' +
+      '<button class="icon-btn small" data-act="tpl-del" data-id="' + t.id + '" aria-label="' + esc(t.name) + ' verwijderen">' + ICON.trash + '</button></div>').join('') + '</div>' +
+      '<div class="row" style="align-items:flex-end"><div class="field" style="flex:1 1 140px"><label for="tpl-name">Naam</label><input class="input" id="tpl-name" data-tpl="name" maxlength="40" value="' + esc(E.name) + '" placeholder="Ochtend"></div>' +
+      '<div class="field" style="flex:0 1 120px"><label for="tpl-start">Begin</label><input class="input" type="time" id="tpl-start" data-tpl="start" value="' + esc(E.start) + '"></div>' +
+      '<div class="field" style="flex:0 1 120px"><label for="tpl-end">Eind</label><input class="input" type="time" id="tpl-end" data-tpl="end" value="' + esc(E.end) + '"></div>' +
+      '<div class="field" style="flex:1 1 140px"><label for="tpl-note">Notitie</label><input class="input" id="tpl-note" data-tpl="note" maxlength="120" value="' + esc(E.note) + '" placeholder="Bijv. balie"></div>' +
+      '<button class="btn dark" data-act="tpl-save">Toevoegen</button></div>';
+  }
+  return h + '</section>';
+}
+function rosterLegend(R) {
+  return '<div class="legend-bar small muted"><span><span class="abs-chip verlof">Verlof</span> goedgekeurd</span><span><span class="abs-chip verlof pending">Verlof?</span> aangevraagd</span><span><span class="abs-chip ziek">Ziek</span></span>' +
+    (R.canPlan ? '<span><span class="av-dot kan"></span> kan werken</span><span><span class="av-dot kan_niet"></span> kan niet</span>' : '') +
+    (S.rosterCompare ? '<span><span class="wk ok">gewerkt</span></span><span><span class="wk warn">afwijking</span></span><span><span class="wk bad">niet geklokt</span></span>' : '') + '</div>';
+}
+function workedCell(R, p, d, shifts) {
+  const w = (R.worked || []).find(x => same(x.memberId, p.id) && x.date === d);
+  if (d > today()) return '';
+  if (!w) return shifts.length && d < today() ? '<span class="wk bad">Niet geklokt</span>' : '';
+  if (!shifts.length) return '<span class="wk warn">Niet ingepland · ' + esc(w.start + '–' + (w.end || 'nu')) + '</span>';
+  const s0 = shifts[0], sl = shifts[shifts.length - 1];
+  const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+  const late = toMin(w.start) - toMin(s0.start), early = w.end ? toMin(sl.end) - toMin(w.end) : 0;
+  const notes = [];
+  if (late > 5) notes.push(late + ' min te laat');
+  if (!w.open && early > 5) notes.push(early + ' min eerder weg');
+  return '<span class="wk ' + (notes.length ? 'warn' : 'ok') + '">' + esc(w.start + '–' + (w.end || 'nu')) + (w.minutes ? ' · ' + fmtHM(w.minutes) : '') + (notes.length ? '<small>' + esc(notes.join(', ')) + '</small>' : '') + '</span>';
 }
 function rosterWeek(R) {
   const days = [0, 1, 2, 3, 4, 5, 6].map(i => addDays(R.weekStart, i));
@@ -1203,10 +1284,16 @@ function rosterWeek(R) {
       return '<tr class="' + (same(p.id, S.me.id) ? 'me' : '') + '"><td class="pad"><strong>' + esc(p.name) + '</strong><div class="small muted">' + esc(contractShort(p)) + '</div>' + leaveTag(p.leavingOn, true) + '</td>' +
         days.map(d => {
           const gone = p.leavingOn && d > p.leavingOn;
-          return '<td class="rc' + (d === today() ? ' is-today' : '') + (gone ? ' gone' : '') + '">' + mine.filter(s => s.date === d).map(s => shiftChip(R, s, false)).join('') +
+          const dayShifts = mine.filter(s => s.date === d);
+          const ab = absFor(R.absences, p.id, d);
+          const av = R.canPlan ? (R.availability || []).find(x => same(x.memberId, p.id) && x.date === d) : null;
+          return '<td class="rc' + (d === today() ? ' is-today' : '') + (gone ? ' gone' : '') + (ab && ab.status === 'goedgekeurd' ? ' absent' : '') + '">' +
+            (ab ? absChip(ab) : '') + (av ? '<span class="av-tag ' + av.status + '" title="' + esc(av.note || '') + '"><span class="av-dot ' + av.status + '"></span>' + (av.status === 'kan' ? (av.start ? esc(av.start + '–' + av.end) : 'Kan') : 'Kan niet') + '</span>' : '') +
+            dayShifts.map(s => shiftChip(R, s, false)).join('') + (S.rosterCompare ? workedCell(R, p, d, dayShifts) : '') +
             (gone ? '<span class="gone-txt">Uit dienst</span>' : R.canPlan ? '<button class="cell-add" data-act="sh-new" data-id="' + p.id + '" data-v="' + d + '" aria-label="Dienst inplannen voor ' + esc(p.name) + ' op ' + esc(dayShort(d)) + '">+</button>' : '') + '</td>';
         }).join('') +
-        '<td class="pad"><strong>' + fmtHM(tot) + '</strong>' + (ch ? '<div class="small muted">van ' + fmtHM(ch) + '</div>' : '') + '</td></tr>';
+        '<td class="pad"><strong>' + fmtHM(tot) + '</strong>' + (ch ? '<div class="small muted">van ' + fmtHM(ch) + '</div>' : '') +
+          (S.rosterCompare ? '<div class="small" style="margin-top:4px">Gewerkt <strong>' + fmtHM((R.worked || []).filter(w => same(w.memberId, p.id)).reduce((a, w) => a + (w.minutes || 0), 0)) + '</strong></div>' : '') + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
 function shiftChip(R, s, withName) {
@@ -1228,7 +1315,10 @@ function rosterMonth(R) {
     h += '<div class="mday' + (out ? ' out' : '') + (d === today() ? ' today' : '') + (gone ? ' gone' : '') + '" role="gridcell">' +
       '<div class="mday-top"><button class="mday-num" data-act="ro-goweek" data-v="' + d + '" aria-label="Week van ' + esc(dayLong(d)) + ' bekijken">' + pd(d).getDate() + '</button>' +
       (list.length ? '<span class="mday-count">' + list.length + '</span>' : '') + '</div>' +
-      '<div class="mday-list">' + list.slice(0, 4).map(s => shiftChip(R, s, !who)).join('') +
+      '<div class="mday-list">' + (R.absences || []).filter(a => (!who || same(a.memberId, who.id)) && absCovers(a, d) && !out).map(a => who ? absChip(a) :
+        '<span class="abs-chip ' + a.kind + (a.status === 'aangevraagd' ? ' pending' : '') + '">' + esc((R.people.find(p => same(p.id, a.memberId)) || { name: '?' }).name.split(' ')[0] + ' · ' + a.kindLabel) + '</span>').join('') +
+      (who && R.canPlan ? (R.availability || []).filter(x => same(x.memberId, who.id) && x.date === d).map(av => '<span class="av-tag ' + av.status + '"><span class="av-dot ' + av.status + '"></span>' + (av.status === 'kan' ? (av.start ? esc(av.start + '–' + av.end) : 'Kan') : 'Kan niet') + '</span>').join('') : '') +
+      list.slice(0, 4).map(s => shiftChip(R, s, !who)).join('') +
       (list.length > 4 ? '<button class="mday-more" data-act="ro-goweek" data-v="' + d + '">+' + (list.length - 4) + ' meer</button>' : '') + '</div>' +
       (R.canPlan && !out && !gone ? '<button class="mday-add" data-act="sh-new" data-id="' + (who ? who.id : '') + '" data-v="' + d + '" aria-label="Dienst inplannen op ' + esc(dayLong(d)) + '">+</button>' : '') + '</div>';
   }
@@ -1321,17 +1411,18 @@ function viewReport() {
   h += '<p class="small muted" style="margin:0">' + esc(dayShort(R.from)) + ' t/m ' + esc(dayShort(R.to)) + ' · ' + R.workdays + ' werkdagen</p>';
   h += '<div class="stats">' + stat('Goedgekeurd', fmtHM(sum('approvedMin')), 'var(--green)') + stat('Ingediend, wacht', fmtHM(sum('submittedMin')), 'var(--orange)') +
     stat('Nog niet ingediend', fmtHM(sum('conceptMin'))) + stat('Medewerkers', R.people.length) + '</div>';
-  h += '<div class="table-wrap"><table><thead><tr><th>Naam</th><th>Contract</th><th>Verwacht</th><th>Goedgekeurd</th><th>Ingediend</th><th>Niet ingediend</th><th>Verschil</th></tr></thead><tbody>' +
+  h += '<div class="table-wrap"><table><thead><tr><th>Naam</th><th>Contract</th><th>Verlof</th><th>Ziek</th><th>Verwacht</th><th>Goedgekeurd</th><th>Ingediend</th><th>Niet ingediend</th><th>Verschil</th></tr></thead><tbody>' +
     R.people.map(p => {
       const worked = p.approvedMin + p.submittedMin;
       const diff = p.expectedMin == null ? null : worked - p.expectedMin;
       const cell = c => '<td><button class="rowbtn" data-act="p-view" data-id="' + p.id + '" data-v="' + mondayOf(R.from) + '">' + c + '</button></td>';
       return '<tr>' + cell('<strong>' + esc(p.name) + '</strong>' + (p.active ? '' : ' <span class="small muted">(gedeactiveerd)</span>')) + cell('<span class="small">' + esc(contractShort(p)) + '</span>') +
+        cell(p.leaveDays ? p.leaveDays + ' d' : '–') + cell(p.sickDays ? '<span style="color:var(--red)">' + p.sickDays + ' d</span>' : '–') +
         cell(p.expectedMin == null ? '–' : fmtHM(p.expectedMin)) + cell('<strong>' + fmtHM(p.approvedMin) + '</strong>') + cell(p.submittedMin ? fmtHM(p.submittedMin) : '–') +
         cell(p.conceptMin ? fmtHM(p.conceptMin) : '–') +
         cell(diff == null || !p.expectedMin ? '–' : '<span style="color:' + (diff < 0 ? 'var(--red)' : 'var(--green)') + '">' + (diff > 0 ? '+' : '') + fmtHM(diff) + '</span>') + '</tr>';
     }).join('') + '</tbody></table></div>' +
-    '<p class="small muted" style="margin:0">Verwacht = contracturen × werkdagen ÷ 5. Feestdagen en verlof tellen hier nog niet mee. Verschil = goedgekeurd + ingediend − verwacht.</p>';
+    '<p class="small muted" style="margin:0">Verwacht = contracturen × (werkdagen − verlof- en ziektedagen) ÷ 5. Feestdagen tellen nog niet mee. Verschil = goedgekeurd + ingediend − verwacht.</p>';
   return h;
 }
 function exportCsv() {
@@ -1339,6 +1430,10 @@ function exportCsv() {
   const q = v => { const s = String(v == null ? '' : v); return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const rows = [['Naam', 'Datum', 'Begin', 'Eind', 'Pauze (min)', 'Uren', 'Status', 'Notitie']]
     .concat(R.entries.map(e => [e.memberName, e.date, e.start, e.end, e.breakMin, ((e.minutes || 0) / 60).toFixed(2).replace('.', ','), (H_STATUS[e.status] || [e.status])[0], e.note]));
+  if (R.absences && R.absences.length) {
+    rows.push([]); rows.push(['Afwezigheid', 'Van', 'Tot en met', '', 'Werkdagen', '', 'Soort', 'Toelichting']);
+    R.absences.forEach(a => rows.push([a.memberName, a.from, a.to || '(loopt nog)', '', a.workdays, '', a.kindLabel, a.note]));
+  }
   const blob = new Blob(['﻿' + rows.map(r => r.map(q).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'uren-' + R.from + '-tm-' + R.to + '.csv';
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
@@ -1408,7 +1503,8 @@ function viewKioskAdmin() {
       '<span class="small muted">Ingesteld door ' + esc(k.createdByName || '–') + ' · ' + esc(fmtDate(k.createdAt)) + ' · ' + (k.lastSeen ? 'laatst actief ' + esc(fmtDate(k.lastSeen)) : 'nog niet gebruikt') + '</span></div>' +
       '<div class="doc-act"><button class="btn small danger" data-act="kiosk-revoke" data-id="' + k.id + '">Uitzetten</button></div></div>').join('') + '</div>'
       : '<div class="empty">Nog geen prikklokken. Start er een op het apparaat dat bij de ingang komt te staan.</div>') +
-    (here ? '<p class="small muted" style="margin:0">Dit apparaat is ook als prikklok ingesteld. <a href="#/klok">Open de prikklok</a>.</p>' : '') + '</section>';
+    (here ? '<div class="alert info" style="align-items:center;justify-content:space-between;flex-wrap:wrap"><span>Dit apparaat is als prikklok ingesteld.</span><button class="btn small primary" data-act="kiosk-reopen">Prikklok weer openen</button></div>' : '') +
+    '<p class="small muted" style="margin:0">Prikklok verlaten: tik op het apparaat 5 keer snel op het Crewdeck-logo linksboven en log in met je eigen naam en code. Dat kan alleen met het recht "Prikklok verlaten met eigen code".</p></section>';
   return h;
 }
 
@@ -1421,10 +1517,18 @@ async function loadKiosk() {
 function kioskTime() { const d = new Date(); return hm(d); }
 function kioskDate() { const d = new Date(); const t = DAYS_FULL[d.getDay()] + ' ' + d.getDate() + ' ' + MONTHS[d.getMonth()]; return t.charAt(0).toUpperCase() + t.slice(1); }
 function viewKiosk() {
-  const head = '<header class="kiosk-head"><div>' + LOGO(30) + (K.info ? '<div class="kiosk-org">' + esc(K.info.org) + ' · ' + esc(K.info.kiosk) + '</div>' : '') + '</div>' +
+  const head = '<header class="kiosk-head"><div><span class="kiosk-logo" data-act="k-logo" aria-hidden="true">' + LOGO(30) + '</span>' + (K.info ? '<div class="kiosk-org">' + esc(K.info.org) + ' · ' + esc(K.info.kiosk) + '</div>' : '') + '</div>' +
     '<div class="kiosk-clock"><strong id="k-time">' + kioskTime() + '</strong><span id="k-date">' + kioskDate() + '</span></div></header>';
   let body;
-  if (K.error === 'none' || K.error === 'revoked') {
+  if (K.exit) {
+    const X = K.exit;
+    body = '<form class="kiosk-exit" data-form="kiosk-exit" novalidate><h1>Prikklok verlaten</h1><p>Log in met je eigen naam en code. Alleen mensen met het recht "Prikklok verlaten" kunnen dit.</p>' +
+      (X.err ? '<p class="kiosk-err" role="alert">' + esc(X.err) + '</p>' : '') +
+      '<div class="field"><label for="kx-name">Naam</label><input class="input" id="kx-name" name="name" autocomplete="off" value="' + esc(X.name || '') + '"></div>' +
+      '<div class="field"><label for="kx-code">Code</label><input class="input code-input" id="kx-code" name="code" type="password" inputmode="numeric" autocomplete="off"></div>' +
+      '<label class="check"><input type="checkbox" name="revoke"' + (X.revoke ? ' checked' : '') + '> Prikklok op dit apparaat helemaal uitzetten</label>' +
+      '<div class="form-foot"><button type="button" class="btn ghost" data-act="k-exit-cancel">Annuleren</button><button type="submit" class="btn primary"' + (X.busy ? ' disabled' : '') + '>' + (X.busy ? 'Bezig…' : 'Inloggen') + '</button></div></form>';
+  } else if (K.error === 'none' || K.error === 'revoked') {
     body = '<div class="kiosk-msg"><h1>' + (K.error === 'revoked' ? 'Deze prikklok is uitgezet' : 'Dit apparaat is nog geen prikklok') + '</h1>' +
       '<p>' + (K.error === 'revoked' ? 'Een leidinggevende heeft deze prikklok uitgezet.' : 'Log in als leidinggevende en kies Uren → Prikklok om hem in te stellen.') + '</p>' +
       '<button class="btn primary" data-act="k-exit">Naar inloggen</button></div>';
@@ -1460,7 +1564,7 @@ function viewKiosk() {
     '<footer class="kiosk-foot">Klokken met je eigen code. Klopt er iets niet? Pas je uren aan in Crewdeck of meld het bij je leidinggevende.</footer></div>';
 }
 let kioskTimer = null;
-function kioskReset(delay) { clearTimeout(kioskTimer); kioskTimer = setTimeout(async () => { K.sel = null; K.code = ''; K.err = null; K.result = null; await loadKiosk(); if (route() === 'klok') render(); }, delay); }
+function kioskReset(delay) { clearTimeout(kioskTimer); kioskTimer = setTimeout(async () => { K.sel = null; K.code = ''; K.err = null; K.result = null; K.exit = null; await loadKiosk(); if (route() === 'klok') render(); }, delay); }
 async function kioskSubmit() {
   if (K.busy || K.code.length < 6) return;
   K.busy = true; K.err = null; render();
@@ -1492,9 +1596,145 @@ setInterval(() => {
   const d = document.getElementById('k-date'); if (d) d.textContent = kioskDate();
 }, 5000);
 setInterval(async () => {
-  if (route() !== 'klok' || K.sel || K.result || document.activeElement && document.activeElement.id === 'k-q') return;
+  if (route() !== 'klok' || K.sel || K.result || K.exit || document.activeElement && document.activeElement.id === 'k-q') return;
   await loadKiosk(); render();
 }, 30000);
+
+// ======================================================================
+// Afwezigheid, beschikbaarheid en meldingen
+// ======================================================================
+const ABS_KINDS = [['verlof', 'Verlof'], ['bijzonder', 'Bijzonder verlof'], ['ziek', 'Ziek']];
+const ABS_STATUS = { aangevraagd: ['Aangevraagd', 'orange'], goedgekeurd: ['Goedgekeurd', 'green'], afgewezen: ['Afgewezen', 'red'], ingetrokken: ['Ingetrokken', ''] };
+function absCovers(a, d) {
+  // een lopende ziekmelding tonen we tot en met vandaag
+  const to = a.to || (a.kind === 'ziek' ? (d <= today() ? d : null) : a.from);
+  return to && a.from <= d && d <= to;
+}
+function absFor(list, memberId, d) { return (list || []).find(a => same(a.memberId, memberId) && absCovers(a, d) && a.status !== 'afgewezen' && a.status !== 'ingetrokken'); }
+function absChip(a) {
+  const pending = a.status === 'aangevraagd';
+  return '<span class="abs-chip ' + a.kind + (pending ? ' pending' : '') + '" title="' + esc(a.kindLabel + (pending ? ' (aangevraagd)' : '')) + '">' + esc(a.kindLabel) + (pending ? '?' : '') + '</span>';
+}
+function spanLabel(a) {
+  if (!a.to) return 'vanaf ' + dayShort(a.from);
+  return a.from === a.to ? dayShort(a.from) : dayShort(a.from) + ' t/m ' + dayShort(a.to);
+}
+function workdaysClient(f, t) { let n = 0; for (let d = f; d <= t; d = addDays(d, 1)) { const w = pd(d).getDay(); if (w > 0 && w < 6) n++; } return n; }
+
+async function loadAbsences() {
+  const boss = can('hours.approve'), team = boss || can('hours.plan') || can('hours.view_all');
+  const [mine, pending, teamList] = await Promise.all([rpc('cd_absences', { p_scope: 'mine' }),
+    boss ? rpc('cd_absences', { p_scope: 'pending' }) : Promise.resolve([]),
+    team ? rpc('cd_absences', { p_scope: 'team', p_from: today(), p_to: addDays(today(), 60) }) : Promise.resolve(null)]);
+  S.abs = { mine, pending, team: teamList };
+  if (boss && !S.colleagues.length) await loadColleagues();
+}
+function absenceForm() {
+  const E = S.absForm; const ziek = E.kind === 'ziek';
+  const n = E.from && (E.to || !ziek) ? workdaysClient(E.from, E.to || E.from) : 0;
+  return '<section class="card stack" style="gap:14px;max-width:none"><h2 style="margin:0">' + (ziek ? 'Ziek melden' : 'Verlof aanvragen') + '</h2>' +
+    '<div class="seg" role="group" aria-label="Soort">' + ABS_KINDS.map(k => '<button data-act="abs-kind" data-v="' + k[0] + '" class="' + (E.kind === k[0] ? 'on' : '') + '" aria-pressed="' + (E.kind === k[0]) + '">' + k[1] + '</button>').join('') + '</div>' +
+    (can('hours.approve') ? '<div class="field" style="max-width:360px"><label for="abs-who">Voor wie</label><select class="input" id="abs-who" data-abs="memberId"><option value="">Mezelf</option>' +
+      S.colleagues.filter(u => !same(u.id, S.me.id)).map(u => '<option value="' + u.id + '"' + (same(E.memberId, u.id) ? ' selected' : '') + '>' + esc(u.name) + '</option>').join('') + '</select>' +
+      '<span class="small muted">Voor iemand anders ingevoerd verlof is meteen goedgekeurd.</span></div>' : '') +
+    '<div class="fields2" style="max-width:520px"><div class="field"><label for="abs-from">' + (ziek ? 'Ziek sinds' : 'Van') + '</label><input class="input" type="date" id="abs-from" data-abs="from" value="' + esc(E.from) + '"' + (ziek ? ' max="' + addDays(today(), 1) + '"' : '') + '></div>' +
+    '<div class="field"><label for="abs-to">' + (ziek ? 'Tot en met <span class="muted" style="font-weight:400">(als je het al weet)</span>' : 'Tot en met') + '</label><input class="input" type="date" id="abs-to" data-abs="to" value="' + esc(E.to) + '" min="' + esc(E.from || '') + '"></div></div>' +
+    (!ziek && n ? '<p class="small muted" style="margin:0">' + n + (n === 1 ? ' werkdag' : ' werkdagen') + '</p>' : '') +
+    '<div class="field"><label for="abs-note">Toelichting <span class="muted" style="font-weight:400">(optioneel)</span></label><input class="input" id="abs-note" data-abs="note" maxlength="300" value="' + esc(E.note) + '" placeholder="' + (ziek ? 'Bijv. griep, verwacht terug op maandag' : 'Bijv. vakantie Spanje') + '"></div>' +
+    (ziek ? '<p class="small muted" style="margin:0">Je leidinggevende krijgt meteen een melding. Meld je weer beter zodra je kunt werken.</p>' : '<p class="small muted" style="margin:0">Je leidinggevende krijgt een melding en keurt het verlof goed of af.</p>') +
+    '<div class="form-foot"><button class="btn ghost" data-act="abs-cancel">Annuleren</button><button class="btn ' + (ziek ? 'danger' : 'primary') + '" data-act="abs-save">' + (ziek ? 'Ziek melden' : 'Aanvragen') + '</button></div></section>';
+}
+function viewAbsence() {
+  const A = S.abs; if (!A) return '';
+  const sick = A.mine.find(a => a.kind === 'ziek' && a.status === 'goedgekeurd' && !a.to);
+  let h = '<header class="page-head"><div><h1>Verlof &amp; ziek</h1><p>Vraag verlof aan, meld je ziek en zie wie er de komende tijd weg is.</p></div>' +
+    '<div class="actions">' + (sick ? '' : '<button class="btn" data-act="abs-new" data-v="ziek">Ziek melden</button>') + '<button class="btn primary" data-act="abs-new" data-v="verlof">' + ICON.plus + 'Verlof aanvragen</button></div></header>';
+  if (sick) {
+    h += '<section class="card sick-card"><div><strong>Je bent ziek gemeld sinds ' + esc(dayLong(sick.from).toLowerCase()) + '</strong><p class="small muted" style="margin:2px 0 0">Beterschap! Meld je beter zodra je weer kunt werken.</p></div>' +
+      '<div class="row" style="align-items:flex-end"><div class="field"><label for="beter-date">Weer aan het werk op</label><input class="input" type="date" id="beter-date" value="' + today() + '" min="' + esc(sick.from) + '"></div>' +
+      '<button class="btn primary" data-act="abs-beter" data-id="' + sick.id + '">Beter melden</button></div></section>';
+  }
+  if (S.absForm) h += absenceForm();
+  if (A.pending.length) {
+    h += '<section class="stack" style="gap:10px;max-width:none"><div class="section-title"><h2>Aanvragen om te beoordelen</h2><span class="badge orange">' + A.pending.length + '</span></div>' +
+      A.pending.map(a => '<div class="card abs-row"><div class="abs-main">' + avatar(a.memberId, a.memberName) + '<div><strong>' + esc(a.memberName) + '</strong> · ' + esc(a.kindLabel) +
+        '<div class="small muted">' + esc(spanLabel(a)) + ' · ' + a.workdays + (a.workdays === 1 ? ' werkdag' : ' werkdagen') + (a.note ? ' · ' + esc(a.note) : '') + '</div></div></div>' +
+        (S.absReject === a.id
+          ? '<div class="row" style="flex:1 1 320px"><input class="input" id="abs-reason" maxlength="300" placeholder="Reden van afwijzen"><button class="btn small ghost" data-act="abs-reject-cancel">Annuleren</button><button class="btn small danger" data-act="abs-reject" data-id="' + a.id + '">Afwijzen</button></div>'
+          : '<div class="row"><button class="btn small" data-act="abs-reject-open" data-id="' + a.id + '">Afwijzen…</button><button class="btn small primary" data-act="abs-approve" data-id="' + a.id + '">Goedkeuren</button></div>') + '</div>').join('') + '</section>';
+  }
+  if (A.team) {
+    const now = A.team.filter(a => absCovers(a, today()) && a.status === 'goedgekeurd');
+    const soon = A.team.filter(a => a.from > today());
+    h += '<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">' +
+      '<section class="card"><h2>Vandaag afwezig</h2>' + (now.length ? '<div class="mini-list">' + now.map(a => '<div class="mini-row"><span>' + esc(a.memberName) + '</span>' + absChip(a) + '</div>').join('') + '</div>' : '<p class="small muted" style="margin:0">Iedereen is er.</p>') + '</section>' +
+      '<section class="card"><h2>Komende 2 maanden</h2>' + (soon.length ? '<div class="mini-list">' + soon.map(a => '<div class="mini-row"><span>' + esc(a.memberName) + ' <span class="small muted">· ' + esc(spanLabel(a)) + '</span></span>' + absChip(a) + '</div>').join('') + '</div>' : '<p class="small muted" style="margin:0">Geen verlof gepland.</p>') + '</section></div>';
+  }
+  h += '<section class="stack" style="gap:8px;max-width:none"><div class="section-title"><h2>Mijn verlof en ziekte</h2></div>';
+  if (!A.mine.length) h += '<div class="empty">Nog niets aangevraagd of gemeld.</div>';
+  else h += '<div class="doc-list">' + A.mine.map(a => {
+    const st = ABS_STATUS[a.status] || [a.status, ''];
+    const canCancel = a.status === 'aangevraagd' || (a.status === 'goedgekeurd' && a.kind !== 'ziek' && a.from > today());
+    return '<div class="doc"><span class="abs-chip big ' + a.kind + '">' + esc(a.kindLabel) + '</span><div class="doc-main"><strong>' + esc(spanLabel(a)) + '</strong>' +
+      '<span class="small muted">' + (a.to || a.kind !== 'ziek' ? a.workdays + (a.workdays === 1 ? ' werkdag' : ' werkdagen') : 'loopt nog') + (a.note ? ' · ' + esc(a.note) : '') +
+      (a.reviewedByName && a.status !== 'aangevraagd' && a.kind !== 'ziek' ? ' · ' + esc(st[0].toLowerCase()) + ' door ' + esc(a.reviewedByName) : '') + (a.rejectReason ? ': ' + esc(a.rejectReason) : '') + '</span></div>' +
+      '<div class="doc-act"><span class="badge ' + st[1] + '">' + st[0] + '</span>' + (canCancel ? '<button class="btn small ghost" data-act="abs-cancel-item" data-id="' + a.id + '">Intrekken</button>' : '') + '</div></div>';
+  }).join('') + '</div>';
+  return h + '</section>';
+}
+
+async function loadAvailability() {
+  const m = S.avMonth || monthStart(today()); S.avMonth = m;
+  const [av, wk] = await Promise.all([rpc('cd_availability', { p_from: mondayOf(m), p_to: addDays(mondayOf(monthEnd(m)), 6) }),
+    rpc('cd_roster_range', { p_from: mondayOf(m), p_to: addDays(mondayOf(monthEnd(m)), 6) })]);
+  S.av = av; S.avRoster = wk;
+}
+function viewAvailability() {
+  if (!S.av) return '';
+  const m = S.avMonth, last = monthEnd(m), from = mondayOf(m), to = addDays(mondayOf(last), 6);
+  const sel = S.avSel || {};
+  const nSel = Object.keys(sel).filter(k => sel[k]).length;
+  const cur = monthStart(today());
+  let h = '<header class="page-head"><div><h1>Beschikbaarheid</h1><p>Geef aan wanneer je wel of niet kunt werken. Wie het rooster maakt ziet dit meteen.</p></div></header>';
+  h += '<div class="roster-bar"><div class="weeknav"><button class="icon-btn" data-act="av-month" data-v="' + addMonths(m, -1) + '" aria-label="Vorige maand">' + ICON.left + '</button>' +
+    '<strong>' + monthLabel(m) + '</strong><button class="icon-btn" data-act="av-month" data-v="' + addMonths(m, 1) + '" aria-label="Volgende maand">' + ICON.right + '</button>' +
+    (m !== cur ? '<button class="btn small ghost" data-act="av-month" data-v="' + cur + '">Naar deze maand</button>' : '') + '</div>' +
+    '<span class="small muted">Tik op dagen om ze te kiezen, of op ma t/m zo om die dag elke week te kiezen.</span></div>';
+  h += '<div class="month av-month"><div class="month-head">' + ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo'].map((d, i) => '<button class="av-wd" data-act="av-weekday" data-v="' + i + '">' + d + '</button>').join('') + '</div><div class="month-grid">';
+  for (let d = from; d <= to; d = addDays(d, 1)) {
+    const out = d < m || d > last, past = d < today();
+    const a = S.av.find(x => x.date === d);
+    const ab = absFor(S.avRoster.absences, S.me.id, d);
+    const sh = S.avRoster.shifts.filter(s => same(s.memberId, S.me.id) && s.date === d);
+    h += '<button class="mday av' + (out ? ' out' : '') + (past ? ' past' : '') + (d === today() ? ' today' : '') + (sel[d] ? ' picked' : '') + (a ? ' ' + a.status : '') + '"' +
+      (past || out ? ' disabled' : ' data-act="av-pick" data-v="' + d + '"') + ' aria-pressed="' + !!sel[d] + '">' +
+      '<span class="mday-num">' + pd(d).getDate() + '</span>' +
+      (a ? '<span class="av-state">' + (a.status === 'kan' ? 'Kan' + (a.start ? ' ' + esc(a.start + '–' + a.end) : '') : 'Kan niet') + '</span>' + (a.note ? '<span class="av-note">' + esc(a.note) + '</span>' : '') : '') +
+      (ab ? absChip(ab) : '') + (sh.length ? '<span class="av-shift">Dienst ' + esc(sh[0].start + '–' + sh[0].end) + '</span>' : '') + '</button>';
+  }
+  h += '</div></div>';
+  const A = S.avEdit || { start: '', end: '', note: '' };
+  h += '<section class="card av-bar' + (nSel ? ' on' : '') + '"><div><strong>' + (nSel ? nSel + (nSel === 1 ? ' dag gekozen' : ' dagen gekozen') : 'Kies eerst een of meer dagen') + '</strong>' +
+    (nSel ? ' <button class="link-btn dark" data-act="av-clear">Selectie wissen</button>' : '') + '</div>' +
+    '<div class="row" style="align-items:flex-end">' +
+      '<div class="field" style="flex:0 1 120px"><label for="av-start">Vanaf</label><input class="input" type="time" id="av-start" data-av="start" value="' + esc(A.start) + '"></div>' +
+      '<div class="field" style="flex:0 1 120px"><label for="av-end">Tot</label><input class="input" type="time" id="av-end" data-av="end" value="' + esc(A.end) + '"></div>' +
+      '<div class="field" style="flex:1 1 180px"><label for="av-note">Notitie</label><input class="input" id="av-note" data-av="note" maxlength="120" value="' + esc(A.note) + '" placeholder="Bijv. school, sport"></div></div>' +
+    '<div class="row"><button class="btn primary" data-act="av-set" data-v="kan"' + (nSel ? '' : ' disabled') + '>Kan werken</button>' +
+      '<button class="btn" data-act="av-set" data-v="kan_niet"' + (nSel ? '' : ' disabled') + '>Kan niet</button>' +
+      '<button class="btn ghost" data-act="av-set" data-v=""' + (nSel ? '' : ' disabled') + '>Wissen</button></div>' +
+    '<p class="small muted" style="margin:0">Laat vanaf en tot leeg voor de hele dag.</p></section>';
+  return h;
+}
+
+function viewNotifications() {
+  const N = S.notif; if (!N) return '';
+  let h = '<header class="page-head"><div><h1>Meldingen</h1><p>Wijzigingen in je rooster, verlof en ziekmeldingen.</p></div></header>';
+  if (!N.items.length) return h + '<div class="empty-state card"><strong>Geen meldingen</strong>Als er iets voor je verandert, zie je het hier.</div>';
+  return h + '<div class="doc-list">' + N.items.map(n => '<button class="doc notif' + (S.notifUnreadIds && S.notifUnreadIds.has(n.id) ? ' unread' : '') + '" data-act="notif-open" data-id="' + n.id + '">' +
+    '<span class="notif-ico ' + esc(n.kind) + '">' + (n.kind === 'rooster' ? NI.rooster : n.kind === 'ziek' || n.kind === 'verlof' ? NI.verlof : ICON.bell) + '</span>' +
+    '<div class="doc-main"><strong>' + esc(n.text) + '</strong><span class="small muted">' + esc(fmtDate(n.at)) + '</span></div></button>').join('') + '</div>';
+}
 
 // ======================================================================
 // Kennisbank
@@ -1632,6 +1872,23 @@ $app.addEventListener('submit', async e => {
   const f = e.target.closest('form[data-form]');
   if (!f) return;
   e.preventDefault(); unlockAudio();
+  if (f.dataset.form === 'kiosk-exit') {
+    const name = f.elements.name.value.trim(), code = f.elements.code.value.trim(), revoke = f.elements.revoke.checked;
+    K.exit = { name, revoke, busy: true }; render();
+    try {
+      const d = await svc('kiosk-exit', { token: kioskToken(), name, code, revoke });
+      await sb.auth.setSession(d.session);
+      if (d.revoked) { try { localStorage.removeItem('crewdeck-kiosk'); } catch (err) { /* */ } }
+      clearTimeout(kioskTimer); K.exit = null; K.info = null;
+      await loadSession(); S.authError = null; S.seen = null;
+      location.hash = '#/overzicht'; await onRoute();
+      toast(d.revoked ? 'Prikklok uitgezet. Je bent ingelogd.' : 'Je bent ingelogd. De prikklok open je weer via Uren → Prikklok.');
+    } catch (err) {
+      K.exit = { name, revoke, err: err.message }; render();
+      const c = document.getElementById('kx-code'); if (c) c.focus();
+    }
+    return;
+  }
   const btn = f.querySelector('button[type=submit]');
   if (btn) btn.disabled = true;
   try {
@@ -1689,6 +1946,9 @@ $app.addEventListener('input', e => {
   if (el.dataset.kb && S.kbEdit) { S.kbEdit[el.dataset.kb] = el.value; return; }
   if (el.dataset.fo && S.folderEdit) { S.folderEdit.name = el.value; return; }
   if (el.dataset.off && S.offboard && !['reason', 'mode'].includes(el.dataset.off)) { S.offboard[el.dataset.off] = el.value; return; }
+  if (el.dataset.abs && S.absForm) { S.absForm[el.dataset.abs] = el.value; return; }
+  if (el.dataset.av) { S.avEdit = S.avEdit || { start: '', end: '', note: '' }; S.avEdit[el.dataset.av] = el.value; return; }
+  if (el.dataset.tpl) { S.tplEdit = S.tplEdit || { name: '', start: '', end: '', note: '' }; S.tplEdit[el.dataset.tpl] = el.value; return; }
   if (el.dataset.in === 'kq') { K.q = el.value; renderKeepFocus(); return; }
   if (el.dataset.in === 'kbq') { S.kbQ = el.value; clearTimeout(logTimer); logTimer = setTimeout(async () => { try { await loadKb(); renderKeepFocus(); } catch (err) { toast(err.message, true); } }, 300); }
   if (el.dataset.in === 'logq') { S.logQ = el.value; clearTimeout(logTimer); logTimer = setTimeout(async () => { try { await loadLog(); renderKeepFocus(); } catch (err) { toast(err.message, true); } }, 300); }
@@ -1709,6 +1969,8 @@ $app.addEventListener('change', async e => {
   }
   if (el.dataset.sh && S.shiftEdit) { S.shiftEdit[el.dataset.sh] = el.value; if (el.dataset.rerender) render(); }
   if (el.dataset.in === 'rowho') { S.rosterWho = el.value; render(); }
+  if (el.dataset.in === 'rocompare') { S.rosterCompare = el.checked; render(); }
+  if (el.dataset.abs && S.absForm) { S.absForm[el.dataset.abs] = el.value; if (el.dataset.abs === 'from' && S.absForm.to && S.absForm.to < el.value) S.absForm.to = el.value; if (['from', 'to', 'memberId'].includes(el.dataset.abs)) render(); }
   if (el.dataset.h && S.hEdit) S.hEdit[el.dataset.h] = el.value;
   if (el.dataset.kbPin !== undefined && S.kbEdit) S.kbEdit.pinned = el.checked;
   if (el.dataset.foRole && S.folderEdit) { const id = el.dataset.foRole; S.folderEdit.roleIds = S.folderEdit.roleIds.filter(x => !same(x, id)); if (el.checked) S.folderEdit.roleIds.push(id); }
@@ -1938,6 +2200,78 @@ $app.addEventListener('click', async e => {
       }
       case 'sh-del': if (!confirm('Deze dienst verwijderen?')) return; await rpc('cd_shift_delete', { p_id: num }); S.shiftEdit = null; toast('Dienst verwijderd.'); break;
 
+      case 'sh-tpl': {
+        const t = S.roster.templates.find(x => same(x.id, raw));
+        Object.assign(S.shiftEdit, { start: t.start, end: t.end, note: t.note || S.shiftEdit.note }); render(); return;
+      }
+      case 'ro-publish': {
+        const wk = S.roster.weekStart;
+        if (!confirm('Week ' + weekNo(wk) + ' vastzetten? Iedereen met een dienst krijgt een melding en ziet het rooster.')) return;
+        const d = await rpc('cd_roster_publish', { p_week: wk });
+        toast('Rooster vastgezet. ' + d.notified + (d.notified === 1 ? ' medewerker' : ' medewerkers') + ' op de hoogte gebracht.'); break;
+      }
+      case 'ro-unpublish': if (!confirm('Deze week terugzetten naar concept? Medewerkers zien hun diensten dan niet meer tot je hem opnieuw vastzet.')) return;
+        await rpc('cd_roster_unpublish', { p_week: S.roster.weekStart }); toast('Week staat weer op concept.'); break;
+      case 'tpl-toggle': S.tplOpen = !S.tplOpen; render(); return;
+      case 'tpl-save': {
+        const E = S.tplEdit || {};
+        if (!E.name || !E.start || !E.end) { toast('Vul een naam, begin- en eindtijd in.', true); return; }
+        await rpc('cd_shift_template_save', { p_id: null, p: E }); S.tplEdit = null; toast('Vaste dienst toegevoegd.'); break;
+      }
+      case 'tpl-del': if (!confirm('Deze vaste dienst verwijderen? Ingeplande diensten blijven staan.')) return; await rpc('cd_shift_template_delete', { p_id: num }); break;
+
+      // verlof en ziek
+      case 'abs-new': S.absForm = { kind: el.dataset.v, from: el.dataset.v === 'ziek' ? today() : '', to: '', note: '', memberId: '' }; S.absReject = null; render(); window.scrollTo(0, 0); return;
+      case 'abs-kind': S.absForm.kind = el.dataset.v; if (el.dataset.v === 'ziek' && !S.absForm.from) S.absForm.from = today(); render(); return;
+      case 'abs-cancel': S.absForm = null; render(); return;
+      case 'abs-save': {
+        const E = S.absForm;
+        if (!E.from) { toast('Kies een begindatum.', true); return; }
+        if (E.kind !== 'ziek' && !E.to) E.to = E.from;
+        const a = await rpc('cd_absence_save', { p: { kind: E.kind, from: E.from, to: E.to, note: E.note, memberId: E.memberId || null } });
+        toast(a.kind === 'ziek' ? (E.memberId ? a.memberName + ' is ziek gemeld.' : 'Ziek gemeld. Beterschap!') : a.status === 'goedgekeurd' ? a.kindLabel + ' ingevoerd voor ' + a.memberName + '.' : 'Aangevraagd. Je krijgt een melding zodra het is beoordeeld.');
+        S.absForm = null; break;
+      }
+      case 'abs-beter': {
+        const d = document.getElementById('beter-date').value;
+        await rpc('cd_absence_action', { p_id: num, p_action: 'beter', p_date: d }); toast('Fijn dat je weer beter bent!'); break;
+      }
+      case 'abs-approve': await rpc('cd_absence_review', { p_id: num, p_approve: true }); toast('Goedgekeurd.'); break;
+      case 'abs-reject-open': S.absReject = num; render(); { const f = document.getElementById('abs-reason'); if (f) f.focus(); } return;
+      case 'abs-reject-cancel': S.absReject = null; render(); return;
+      case 'abs-reject': {
+        const reason = document.getElementById('abs-reason').value.trim();
+        if (!reason) { toast('Geef een reden op.', true); return; }
+        await rpc('cd_absence_review', { p_id: num, p_approve: false, p_reason: reason }); S.absReject = null; toast('Afgewezen.'); break;
+      }
+      case 'abs-cancel-item': if (!confirm('Dit verlof intrekken?')) return; await rpc('cd_absence_action', { p_id: num, p_action: 'intrekken' }); toast('Ingetrokken.'); break;
+
+      // beschikbaarheid
+      case 'av-month': S.avMonth = el.dataset.v; S.avSel = {}; break;
+      case 'av-pick': S.avSel[el.dataset.v] = !S.avSel[el.dataset.v]; render(); return;
+      case 'av-weekday': {
+        const wd = Number(el.dataset.v); const m = S.avMonth, last = monthEnd(m);
+        const days = []; for (let d = m; d <= last; d = addDays(d, 1)) if ((pd(d).getDay() + 6) % 7 === wd && d >= today()) days.push(d);
+        const allOn = days.length && days.every(d => S.avSel[d]);
+        days.forEach(d => { S.avSel[d] = !allOn; }); render(); return;
+      }
+      case 'av-clear': S.avSel = {}; render(); return;
+      case 'av-set': {
+        const dates = Object.keys(S.avSel).filter(k => S.avSel[k]);
+        const A = S.avEdit || {};
+        if (el.dataset.v === 'kan' && (!!A.start !== !!A.end)) { toast('Vul zowel vanaf als tot in, of laat beide leeg.', true); return; }
+        const d = await rpc('cd_availability_set', { p_dates: dates, p_status: el.dataset.v || null, p_start: el.dataset.v === 'kan' ? A.start || null : null, p_end: el.dataset.v === 'kan' ? A.end || null : null, p_note: A.note || null });
+        toast(el.dataset.v ? 'Opgeslagen voor ' + dates.length + (dates.length === 1 ? ' dag.' : ' dagen.') : 'Gewist.'); S.avSel = {}; void d; break;
+      }
+
+      // meldingen
+      case 'notif-open': {
+        const n = S.notif.items.find(x => same(x.id, raw)); if (!n || !n.link) return;
+        if (n.link.startsWith('rooster|')) { S.rosterView = 'week'; S.rosterWeek = n.link.split('|')[1]; go('rooster'); }
+        else if (n.link === 'verlof') go('verlof');
+        return;
+      }
+
       // goedkeuren
       case 'p-view': S.hMember = raw; S.hWeek = el.dataset.v; S.hKeep = true; go('uren'); return;
       case 'p-reject-open': S.rejectFor = el.dataset.v; render(); { const f = document.getElementById('rej-reason'); if (f) f.focus(); } return;
@@ -2049,6 +2383,12 @@ $app.addEventListener('click', async e => {
         Object.assign(K, { info: null, error: null, sel: null, code: '', result: null });
         location.hash = '#/klok'; return;
       }
+      case 'kiosk-reopen': {
+        if (!confirm('De prikklok weer openen? Je wordt op dit apparaat uitgelogd.')) return;
+        await sb.auth.signOut({ scope: 'local' }); S.me = null; S.seen = null;
+        Object.assign(K, { info: null, error: null, sel: null, code: '', result: null, exit: null });
+        location.hash = '#/klok'; return;
+      }
       case 'kiosk-revoke': {
         const k = S.kiosks.kiosks.find(x => same(x.id, raw));
         if (!confirm('"' + k.name + '" uitzetten? Op dat apparaat kan dan niemand meer klokken.')) return;
@@ -2058,6 +2398,12 @@ $app.addEventListener('click', async e => {
       case 'k-cancel': K.sel = null; K.code = ''; K.err = null; render(); return;
       case 'k-key': kioskKey(el.dataset.v); return;
       case 'k-ok': await kioskSubmit(); return;
+      case 'k-logo': {
+        const now = Date.now(); K.taps = K.taps.filter(t => now - t < 3000); K.taps.push(now);
+        if (K.taps.length >= 5 && !K.exit) { K.taps = []; K.sel = null; K.code = ''; K.result = null; K.exit = { name: '', revoke: false }; render(); const f = document.getElementById('kx-name'); if (f) f.focus(); kioskReset(90000); }
+        return;
+      }
+      case 'k-exit-cancel': K.exit = null; render(); return;
       case 'k-exit': try { localStorage.removeItem('crewdeck-kiosk'); } catch (err) { /* */ } K.error = null; location.hash = '#/login'; return;
 
       // mensen
@@ -2140,7 +2486,7 @@ setInterval(async () => {
   const typing = a && /INPUT|TEXTAREA|SELECT/.test(a.tagName);
   try {
     const editing = S.hEdit || S.shiftEdit || S.rejectFor;
-    if (['overzicht', 'terugbellen', 'taken', 'team', 'uren', 'goedkeuren', 'rooster'].includes(r) && !typing && !editing && !document.hidden) {
+    if (['overzicht', 'terugbellen', 'taken', 'team', 'uren', 'goedkeuren', 'rooster', 'verlof'].includes(r) && !typing && !editing && !S.absForm && !S.absReject && !document.hidden) {
       const y = window.scrollY; await loadRoute(); render(); window.scrollTo(0, y);
     } else {
       await loadCounts();
