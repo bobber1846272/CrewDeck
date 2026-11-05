@@ -1,4 +1,4 @@
-/* Crewdeck Beheer — het beheerpaneel voor alle bedrijven (los van de bedrijfsapp).
+/* CrewHarbor Beheer — het beheerpaneel voor alle bedrijven (los van de bedrijfsapp).
  * Aanvragen verwerken, bedrijven aanmaken en beheren, beheerders en een logboek.
  * Praat met de database via public.cd_admin_* en met de logindienst (edge function "crewdeck", acties admin-*).
  */
@@ -14,7 +14,7 @@ const SITE = (CFG.siteUrl || (location.origin + location.pathname.replace(/admin
 const A = {
   ready: false, data: null, screen: 'login', err: null, busy: false,
   tab: 'aanvragen', reqFilter: 'nieuw', q: '',
-  create: null, created: null, rejectFor: null, blockFor: null, editOrg: null, orgSel: null, codeFor: null, addAdmin: false
+  create: null, created: null, rejectFor: null, blockFor: null, editOrg: null, orgSel: null, codeFor: null, delFor: null, addAdmin: false
 };
 
 // ---------- hulpjes ----------
@@ -39,7 +39,7 @@ function slugify(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
     .replace(/\b(b\.?v\.?|v\.?o\.?f\.?|holding|groep)\b/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || '';
 }
-const LOGO = '<svg width="32" height="32" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#15233A"/><rect x="14" y="16" width="36" height="8" rx="4" fill="#2DD4BF"/><rect x="14" y="28" width="28" height="8" rx="4" fill="#5EEAD4" opacity=".85"/><rect x="14" y="40" width="20" height="8" rx="4" fill="#99F6E4" opacity=".7"/></svg>';
+const LOGO = h => window.CH_LOGO(h); // zie logo.js
 let toastTimer;
 function toast(msg, isError) {
   const t = document.getElementById('toast');
@@ -80,15 +80,15 @@ async function logout(msg) {
 
 // ---------- schermen: inrichten en inloggen ----------
 function shell(inner) {
-  return '<div class="login"><section class="login-brand"><div><span class="logo">' + LOGO + 'Crewdeck</span></div>' +
-    '<div><h1>Crewdeck Beheer</h1><p>Aanvragen verwerken, bedrijven aanmaken en alles in de gaten houden.</p></div>' +
+  return '<div class="login"><section class="login-brand"><div><span class="logo">' + LOGO(40) + '</span></div>' +
+    '<div><h1>CrewHarbor Beheer</h1><p>Aanvragen verwerken, bedrijven aanmaken en alles in de gaten houden.</p></div>' +
     '<div class="spark"><span>Een product van <strong>Spark Apps</strong></span></div></section>' +
     '<section class="login-main">' + inner + '</section></div>';
 }
 const errBox = () => A.err ? '<div class="alert error" role="alert"><span>' + esc(A.err) + '</span></div>' : '';
 function viewLogin() {
   return shell('<form class="login-card" data-form="login" novalidate>' +
-    '<div><h2>Inloggen</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Alleen voor beheerders van Crewdeck.</p></div>' + errBox() +
+    '<div><h2>Inloggen</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Alleen voor beheerders van CrewHarbor.</p></div>' + errBox() +
     '<div class="field"><label for="a-name">Naam</label><input class="input" id="a-name" name="name" autocomplete="username" required></div>' +
     '<div class="field"><label for="a-pw">Wachtwoord</label><input class="input" id="a-pw" name="password" type="password" autocomplete="current-password" required></div>' +
     '<button class="btn primary" type="submit">Inloggen</button>' +
@@ -112,7 +112,7 @@ function viewPanel() {
   const tabs = [['aanvragen', 'Aanvragen', open], ['bedrijven', 'Bedrijven', d.orgs.length], ['beheerders', 'Beheerders', 0], ['logboek', 'Logboek', 0]];
   const body = { aanvragen: viewRequests, bedrijven: viewOrgs, beheerders: viewAdmins, logboek: viewLog }[A.tab]();
   return '<div class="adm">' +
-    '<header class="adm-top"><div class="adm-brand">' + LOGO + '<div><strong>Crewdeck</strong> <span>Beheer</span></div></div>' +
+    '<header class="adm-top"><div class="adm-brand"><span class="logo">' + LOGO(28) + '</span><span class="adm-sub">Beheer</span></div>' +
       '<div class="adm-me"><span>' + esc(d.me.name) + '</span><button class="btn small ghost" data-act="logout">Uitloggen</button></div></header>' +
     '<main class="adm-main">' +
       '<div class="stats">' +
@@ -131,7 +131,7 @@ function viewRequests() {
   const list = all.filter(r => A.reqFilter === 'alle' ? true : A.reqFilter === 'nieuw' ? r.status === 'nieuw' : r.status !== 'nieuw');
   let h = '<div class="tabs-inline">' + [['nieuw', 'Nieuw'], ['verwerkt', 'Verwerkt'], ['alle', 'Alle']].map(f =>
     '<button class="btn small' + (A.reqFilter === f[0] ? ' on' : '') + '" data-act="req-filter" data-id="' + f[0] + '">' + f[1] + '</button>').join('') + '</div>';
-  if (!list.length) return h + '<div class="empty">' + (A.reqFilter === 'nieuw' ? 'Geen nieuwe aanvragen. Bedrijven vragen Crewdeck aan via <a href="' + esc(SITE) + '#/registreren" target="_blank" rel="noopener">het aanvraagformulier</a>.' : 'Nog niets hier.') + '</div>';
+  if (!list.length) return h + '<div class="empty">' + (A.reqFilter === 'nieuw' ? 'Geen nieuwe aanvragen. Bedrijven vragen CrewHarbor aan via <a href="' + esc(SITE) + '#/registreren" target="_blank" rel="noopener">het aanvraagformulier</a>.' : 'Nog niets hier.') + '</div>';
   return h + '<div class="adm-list">' + list.map(r => {
     const badge = r.status === 'nieuw' ? '<span class="badge orange">Nieuw</span>' : r.status === 'goedgekeurd' ? '<span class="badge green">Aangemaakt' + (r.orgSlug ? ' · ' + esc(r.orgSlug) : '') + '</span>' : '<span class="badge red">Afgewezen</span>';
     let x = '<article class="card adm-req"><div class="item-top"><div><div class="item-title">' + esc(r.company) + '</div>' +
@@ -175,7 +175,7 @@ function viewCreateForm() {
 }
 function loginMessage(r, isNewCode) {
   const greet = r.contactName ? 'Hoi ' + r.contactName.split(/\s+/)[0] + ',' : 'Hoi,';
-  return greet + '\n\n' + (isNewCode ? 'Hierbij een nieuwe code om in te loggen bij Crewdeck.' : 'Je Crewdeck-account staat klaar! Hiermee log je in:') + '\n\n' +
+  return greet + '\n\n' + (isNewCode ? 'Hierbij een nieuwe code om in te loggen bij CrewHarbor.' : 'Je CrewHarbor-account staat klaar! Hiermee log je in:') + '\n\n' +
     'Website: ' + SITE + '\nBedrijfscode: ' + r.slug + '\nNaam: ' + r.ownerName + '\nCode: ' + r.code + '\n\n' +
     'Na het inloggen kun je je code wijzigen bij Instellingen en je team toevoegen bij Mensen.' +
     (isNewCode ? '' : ' Je collega’s loggen in met dezelfde bedrijfscode en hun eigen naam en code.') +
@@ -189,7 +189,7 @@ function viewCreated() {
     '<dl class="kv"><dt>Bedrijfscode</dt><dd>' + esc(r.slug) + '</dd><dt>Naam eigenaar</dt><dd>' + esc(r.ownerName) + '</dd><dt>Code</dt><dd class="code-big">' + esc(r.code) + '</dd></dl>' +
     '<div class="field"><label for="msg">Bericht om te versturen</label><textarea class="input" id="msg" rows="12" readonly>' + esc(loginMessage(r, r.isNewCode)) + '</textarea></div>' +
     '<div class="row"><button class="btn primary" data-act="copy-msg">Bericht kopiëren</button>' +
-      (r.contactEmail ? '<a class="btn" href="mailto:' + esc(r.contactEmail) + '?subject=' + encodeURIComponent('Je Crewdeck-account') + '&body=' + encodeURIComponent(loginMessage(r, r.isNewCode)) + '">Openen in e-mail</a>' : '') + '</div></section>';
+      (r.contactEmail ? '<a class="btn" href="mailto:' + esc(r.contactEmail) + '?subject=' + encodeURIComponent('Je CrewHarbor-account') + '&body=' + encodeURIComponent(loginMessage(r, r.isNewCode)) + '">Openen in e-mail</a>' : '') + '</div></section>';
 }
 
 function viewOrgs() {
@@ -223,13 +223,19 @@ function viewOrgs() {
           x += '<form class="box" data-form="block" data-id="' + o.id + '"><p style="margin:0">Niemand van <strong>' + esc(o.name) + '</strong> kan nog inloggen of klokken tot je het bedrijf weer vrijgeeft. Er wordt niets verwijderd.</p>' +
             '<div class="field"><label for="b-r">Reden</label><input class="input" id="b-r" name="reason" placeholder="Bijv. niet betaald, op verzoek"></div>' +
             '<div class="row"><button class="btn danger" type="submit">Blokkeren</button><button class="btn ghost" type="button" data-act="block-cancel">Annuleren</button></div></form>';
+        } else if (A.delFor === o.id) {
+          x += '<form class="box bad" data-form="org-delete" data-id="' + o.id + '" novalidate><p style="margin:0"><strong>Definitief verwijderen.</strong> Alles van <strong>' + esc(o.name) + '</strong> gaat weg: ' + o.members + ' medewerker' + (o.members === 1 ? '' : 's') + ' en hun accounts, taken, terugbelverzoeken, uren, rooster, kennisbank en documenten. Dit kun je niet ongedaan maken.</p>' +
+            (o.blocked ? '' : '<p class="small muted" style="margin:0">Twijfel je? Blokkeer het bedrijf dan liever; dat kun je altijd terugdraaien.</p>') +
+            '<div class="field"><label for="d-c">Typ <strong>' + esc(o.slug) + '</strong> om te bevestigen</label><input class="input" id="d-c" name="confirm" autocomplete="off" autocapitalize="none" spellcheck="false"></div>' +
+            '<div class="row"><button class="btn danger" type="submit"' + (A.busy ? ' disabled' : '') + '>' + (A.busy ? 'Bezig met verwijderen…' : 'Definitief verwijderen') + '</button><button class="btn ghost" type="button" data-act="del-cancel">Annuleren</button></div></form>';
         } else if (A.codeFor === o.id) {
           x += '<div class="box"><p style="margin:0">De eigenaar (<strong>' + esc(o.owner || '–') + '</strong>) krijgt een nieuwe code. De oude code werkt dan niet meer.</p>' +
             '<div class="row"><button class="btn dark" data-act="owner-code-go" data-id="' + o.id + '"' + (A.busy ? ' disabled' : '') + '>Nieuwe code maken</button><button class="btn ghost" data-act="owner-code-cancel">Annuleren</button></div></div>';
         } else {
           x += '<div class="row"><button class="btn" data-act="org-edit" data-id="' + o.id + '">Gegevens wijzigen</button>' +
             '<button class="btn" data-act="owner-code" data-id="' + o.id + '">Nieuwe code eigenaar</button>' +
-            (o.blocked ? '<button class="btn green" data-act="unblock" data-id="' + o.id + '">Vrijgeven</button>' : '<button class="btn danger" data-act="block" data-id="' + o.id + '">Blokkeren</button>') + '</div>';
+            (o.blocked ? '<button class="btn green" data-act="unblock" data-id="' + o.id + '">Vrijgeven</button>' : '<button class="btn danger" data-act="block" data-id="' + o.id + '">Blokkeren</button>') +
+            '<button class="btn ghost adm-del" data-act="del" data-id="' + o.id + '">Verwijderen</button></div>';
         }
       }
     }
@@ -258,7 +264,7 @@ function viewLog() {
 // ---------- tekenen ----------
 function render() {
   if (!A.ready) { $app.innerHTML = ''; return; }
-  document.title = 'Crewdeck Beheer';
+  document.title = 'CrewHarbor Beheer';
   if (!A.data) { $app.innerHTML = A.screen === 'setup' ? viewSetup() : viewLogin(); return; }
   const y = window.scrollY;
   $app.innerHTML = viewPanel();
@@ -277,7 +283,7 @@ $app.addEventListener('click', async e => {
       case 'to-setup': A.screen = 'setup'; A.err = null; render(); break;
       case 'to-login': A.screen = 'login'; A.err = null; render(); break;
       case 'logout': await logout(); break;
-      case 'tab': A.tab = id; A.orgSel = null; A.editOrg = null; A.blockFor = null; A.codeFor = null; render(); break;
+      case 'tab': A.tab = id; A.orgSel = null; A.editOrg = null; A.blockFor = null; A.codeFor = null; A.delFor = null; render(); break;
       case 'req-filter': A.reqFilter = id; render(); break;
       case 'new-org':
         A.create = { requestId: null, orgName: '', slug: '', ownerName: '', contactName: '', contactEmail: '', contactPhone: '' }; A.created = null; render();
@@ -297,12 +303,14 @@ $app.addEventListener('click', async e => {
       case 'reject': A.rejectFor = Number(id); render(); document.getElementById('rj-' + id).focus(); break;
       case 'reject-cancel': A.rejectFor = null; render(); break;
       case 'req-delete': await rpc('cd_admin_request_delete', { p_id: Number(id) }); await refresh(); toast('Aanvraag verwijderd.'); break;
-      case 'org-open': A.orgSel = A.orgSel === id ? null : id; A.editOrg = null; A.blockFor = null; A.codeFor = null; render(); break;
+      case 'org-open': A.orgSel = A.orgSel === id ? null : id; A.editOrg = null; A.blockFor = null; A.codeFor = null; A.delFor = null; render(); break;
       case 'org-edit': A.editOrg = id; render(); break;
       case 'org-edit-cancel': A.editOrg = null; render(); break;
       case 'block': A.blockFor = id; render(); document.getElementById('b-r').focus(); break;
       case 'block-cancel': A.blockFor = null; render(); break;
       case 'unblock': await rpc('cd_admin_org_block', { p_id: id, p_blocked: false }); await refresh(); toast('Bedrijf vrijgegeven. Iedereen kan weer inloggen.'); break;
+      case 'del': A.delFor = id; render(); document.getElementById('d-c').focus(); break;
+      case 'del-cancel': A.delFor = null; render(); break;
       case 'owner-code': A.codeFor = id; render(); break;
       case 'owner-code-cancel': A.codeFor = null; render(); break;
       case 'owner-code-go': {
@@ -371,6 +379,17 @@ $app.addEventListener('submit', async e => {
       await rpc('cd_admin_org_update', { p_id: id, p: { name: v('name'), contactName: v('contactName'), contactEmail: v('contactEmail'), contactPhone: v('contactPhone'), notes: v('notes') } });
       A.editOrg = null; await refresh(); toast('Opgeslagen.'); return;
     }
+    if (kind === 'org-delete') {
+      const o = A.data.orgs.find(x => x.id === id);
+      if (v('confirm').toLowerCase() !== o.slug) throw new Error('Typ ' + o.slug + ' om te bevestigen.');
+      A.busy = true; render();
+      try {
+        const r = await svc('admin-org-delete', { orgId: id, confirm: v('confirm') });
+        A.delFor = null; A.orgSel = null; if (A.created && A.created.slug === o.slug) A.created = null;
+        toast(r.failed ? r.name + ' is verwijderd, maar ' + r.failed + ' account(s) konden niet worden opgeruimd.' : r.name + ' is verwijderd.', !!r.failed);
+      } finally { A.busy = false; }
+      await refresh(); return;
+    }
     if (kind === 'admin-add') {
       await svc('admin-add', { name: v('name'), password: f.elements.password.value });
       A.addAdmin = false; await refresh(); toast('Beheerder toegevoegd.'); return;
@@ -392,5 +411,5 @@ $app.addEventListener('submit', async e => {
     if (session) { try { await load(); } catch (e) { A.data = null; } }
   } catch (e) { /* */ }
   A.ready = true; render();
-  setInterval(() => { if (A.data && !document.hidden && !A.create && !A.editOrg && !A.blockFor && !A.rejectFor && !A.addAdmin && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || '')) refresh(); }, 60000);
+  setInterval(() => { if (A.data && !document.hidden && !A.create && !A.editOrg && !A.blockFor && !A.rejectFor && !A.addAdmin && !A.delFor && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || '')) refresh(); }, 60000);
 })();

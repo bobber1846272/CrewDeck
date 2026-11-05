@@ -1,4 +1,4 @@
-/* Crewdeck — webapp
+/* CrewHarbor — webapp
  * Praat met de database via gecontroleerde functies (public.cd_*) en met de logindienst (edge function "crewdeck").
  * Geen externe bibliotheken behalve de meegeleverde Supabase-client (vendor/supabase.js).
  */
@@ -17,7 +17,7 @@ const PERM_GROUPS = [
     ['tasks.edit_all', 'Alle taken bewerken'], ['tasks.delete', 'Taken verwijderen']]],
   ['Uren', [['hours.view_all', 'Uren van iedereen zien'], ['hours.approve', 'Uren en verlof goedkeuren'], ['hours.plan', 'Rooster plannen'], ['hours.kiosk', 'Prikklok instellen'], ['hours.kiosk_exit', 'Prikklok verlaten met eigen code']]],
   ['Kennis & documenten', [['kb.edit', 'Kennisbank bewerken'], ['docs.upload', 'Documenten uploaden'], ['docs.manage', 'Mappen en documenten beheren']]],
-  ['Teamleiding', [['team.board', 'Teambord'], ['reports.view', 'Cijfers'], ['audit.view', 'Logboek']]],
+  ['Teamleiding', [['team.board', 'Teambord'], ['reports.view', 'Cijfers'], ['phone.view', 'Telefonie bekijken'], ['audit.view', 'Logboek']]],
   ['Beheer', [['members.manage', 'Medewerkers beheren'], ['roles.manage', 'Rollen en rechten beheren'], ['org.manage', 'Bedrijfsinstellingen']]]
 ];
 const REPEATS = { none: 'Niet herhalen', werkdag: 'Elke werkdag', dag: 'Elke dag', week: 'Elke week' };
@@ -38,6 +38,7 @@ const S = {
   roster: null, rosterWeek: null, shiftEdit: null,
   pending: null, pOff: {}, rejectFor: null,
   report: null, repPeriod: 'maand', repFrom: null, repTo: null,
+  phone: null, phStatus: null, phPeriod: 'week', phSyncing: false, phSyncedAt: 0, phEdit: false, phDisc: false,
   kb: null, kbQ: '', kbCat: '', kbSel: null, kbArticle: null, kbEdit: null,
   docs: null, docFolder: null, folderEdit: null, uploading: null,
   mTab: 'actief', offboard: null, kiosks: null, kioskName: '',
@@ -56,7 +57,7 @@ function initials(name) {
   const p = String(name || '?').trim().split(/\s+/);
   return ((p[0] || '?')[0] + (p.length > 1 ? p[p.length - 1][0] : (p[0][1] || ''))).toUpperCase();
 }
-const COLORS = ['#334155', '#0F766E', '#1D4ED8', '#7A2E8E', '#9A3412', '#166534', '#9F1239', '#0E7490'];
+const COLORS = ['#334155', '#1D6E7B', '#1D4ED8', '#7A2E8E', '#9A3412', '#166534', '#9F1239', '#0E7490'];
 function colorFor(id) { let h = 0; String(id).split('').forEach(c => { h = (h * 31 + c.charCodeAt(0)) >>> 0; }); return COLORS[h % COLORS.length]; }
 function avatar(id, name, cls) { return '<span class="avatar ' + (cls || '') + '" style="background:' + colorFor(id) + '" title="' + esc(name) + '">' + esc(initials(name)) + '</span>'; }
 function pad(n) { return String(n).padStart(2, '0'); }
@@ -169,7 +170,7 @@ const ICON = {
   pin: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px"><path d="M12 17v5M8 3h8l-1 6 3 4H6l3-4z"/></svg>',
   file: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>',
   folder: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
-  tick: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5EEAD4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>'
+  tick: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7FC4CF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>'
 };
 const NI = (() => {
   const i = d => '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
@@ -181,6 +182,7 @@ const NI = (() => {
     rooster: i('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
     goedkeuren: i('<path d="M20 6 9 17l-5-5"/>'),
     urenoverzicht: i('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+    telefonie: i('<path d="M4 4h3.5l1.5 4-2 1.2a9 9 0 0 0 4 4L12.2 11l4 1.5V16a1.5 1.5 0 0 1-1.5 1.5A12.5 12.5 0 0 1 2.5 5.5 1.5 1.5 0 0 1 4 4"/><path d="M17 3v6M20 5v4M14 6v3"/>'),
     meldingen: i('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/>'),
     beschikbaar: i('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="m9 15 2 2 4-4"/>'),
     verlof: i('<path d="M12 3v2M5.6 5.6 7 7M3 12h2M19 12h2M17 7l1.4-1.4"/><path d="M8 14a4 4 0 0 1 8 0"/><path d="M3 18h18M6 21h12"/>'),
@@ -195,7 +197,7 @@ const NI = (() => {
     instellingen: i('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>')
   };
 })();
-const LOGO = size => '<span class="logo"><svg width="' + size + '" height="' + size + '" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#15233A"/><rect x="14" y="16" width="36" height="8" rx="4" fill="#2DD4BF"/><rect x="14" y="28" width="28" height="8" rx="4" fill="#5EEAD4" opacity=".85"/><rect x="14" y="40" width="20" height="8" rx="4" fill="#99F6E4" opacity=".7"/></svg>Crewdeck</span>';
+const LOGO = size => '<span class="logo">' + window.CH_LOGO(size) + '</span>'; // zie logo.js
 
 // ---------- meldingen ----------
 const prefs = (() => { try { return JSON.parse(localStorage.getItem('crewdeck-prefs') || '{}'); } catch (e) { return {}; } })();
@@ -225,13 +227,13 @@ function notify(title, body) {
 }
 function updateTitle() {
   const n = S.counts.mine + S.counts.tasks + (S.notif ? S.notif.unread : 0);
-  document.title = (n ? '(' + n + ') ' : '') + 'Crewdeck' + (S.org ? ' · ' + S.org.name : '');
+  document.title = (n ? '(' + n + ') ' : '') + 'CrewHarbor' + (S.org ? ' · ' + S.org.name : '');
 }
 
 // ---------- routes ----------
 const ROUTES = ['overzicht', 'terugbellen', 'verzoek', 'taken', 'taak', 'uren', 'rooster', 'goedkeuren', 'urenoverzicht', 'prikklok', 'klok', 'verlof', 'beschikbaar', 'meldingen', 'kennisbank', 'documenten',
-  'team', 'cijfers', 'logboek', 'mensen', 'rollen', 'instellingen', 'login', 'registreren'];
-const ROUTE_PERM = { team: 'team.board', cijfers: 'reports.view', logboek: 'audit.view', instellingen: null, goedkeuren: 'hours.approve', urenoverzicht: 'hours.view_all', prikklok: 'hours.kiosk',
+  'team', 'cijfers', 'telefonie', 'logboek', 'mensen', 'rollen', 'instellingen', 'login', 'registreren'];
+const ROUTE_PERM = { team: 'team.board', cijfers: 'reports.view', telefonie: 'phone.view', logboek: 'audit.view', instellingen: null, goedkeuren: 'hours.approve', urenoverzicht: 'hours.view_all', prikklok: 'hours.kiosk',
   mensen: ['members.manage', 'roles.manage'], rollen: ['members.manage', 'roles.manage'] };
 function route() { const h = location.hash.replace(/^#\/?/, ''); return ROUTES.includes(h) ? h : (S.me ? 'overzicht' : (kioskToken() ? 'klok' : 'login')); }
 function go(r) { if (location.hash === '#/' + r) onRoute(); else location.hash = '#/' + r; }
@@ -302,6 +304,8 @@ async function loadRoute() {
   if (r === 'rooster') jobs.push(loadRoster());
   if (r === 'goedkeuren') jobs.push(rpc('cd_hours_pending').then(d => { S.pending = d; }));
   if (r === 'urenoverzicht') jobs.push(loadReport());
+  if (r === 'telefonie') jobs.push(loadPhone());
+  if (r === 'instellingen' && can('org.manage')) jobs.push(rpc('cd_phone_status').then(d => { S.phStatus = d; }).catch(() => { S.phStatus = null; }));
   if (r === 'prikklok') jobs.push(rpc('cd_kiosks').then(d => { S.kiosks = d; }));
   if (r === 'verlof') jobs.push(loadAbsences());
   if (r === 'beschikbaar') jobs.push(loadAvailability());
@@ -358,16 +362,16 @@ async function loadPeople() {
 function render() {
   const r = route();
   if (APP && APP.keepAwake) { try { APP.keepAwake(r === 'klok'); } catch (e) { /* */ } }
-  if (r === 'klok') { document.title = 'Prikklok · Crewdeck'; $app.innerHTML = viewKiosk(); return; }
+  if (r === 'klok') { document.title = 'Prikklok · CrewHarbor'; $app.innerHTML = viewKiosk(); return; }
   if (!S.me) {
-    document.title = 'Crewdeck';
+    document.title = 'CrewHarbor';
     $app.innerHTML = r === 'registreren' ? viewRegister() : viewLogin();
     return;
   }
   if (APP && typeof viewMobile === 'function') { $app.innerHTML = viewMobile(); updateTitle(); return; }
   const views = { overzicht: viewHome, terugbellen: viewCallbacks, verzoek: viewCallbackForm, taken: viewTasks, taak: viewTaskForm, team: viewTeam,
     cijfers: viewStats, logboek: viewLog, mensen: viewMembers, rollen: viewRoles, instellingen: viewSettings,
-    uren: viewHours, rooster: viewRoster, prikklok: viewKioskAdmin, verlof: viewAbsence, beschikbaar: viewAvailability, meldingen: viewNotifications, goedkeuren: viewApprove, urenoverzicht: viewReport, kennisbank: viewKb, documenten: viewDocs };
+    uren: viewHours, rooster: viewRoster, prikklok: viewKioskAdmin, verlof: viewAbsence, beschikbaar: viewAvailability, meldingen: viewNotifications, goedkeuren: viewApprove, urenoverzicht: viewReport, telefonie: viewPhone, kennisbank: viewKb, documenten: viewDocs };
   $app.innerHTML = '<div class="shell">' + viewNav(r) + '<main class="main' + (r === 'team' || r === 'rooster' ? ' wide' : '') + '" id="main">' + (views[r] || viewHome)() + '</main></div>';
   updateTitle();
 }
@@ -398,7 +402,7 @@ function viewLogin() {
       '<div class="field"><label for="l-name">Naam</label><input class="input" id="l-name" name="name" autocomplete="username" required></div>' +
       '<div class="field"><label for="l-code">Code</label><input class="input code-input" id="l-code" name="code" type="password" inputmode="numeric" autocomplete="current-password" required></div>' +
       '<button class="btn primary" type="submit" id="l-submit">Inloggen</button>' +
-      '<p class="switch">Nieuw bij Crewdeck? <a href="#/registreren">' + (S.regInfo && S.regInfo.request === false ? 'Registreer je bedrijf' : 'Vraag Crewdeck aan') + '</a></p>' +
+      '<p class="switch">Nieuw bij CrewHarbor? <a href="#/registreren">' + (S.regInfo && S.regInfo.request === false ? 'Registreer je bedrijf' : 'Vraag CrewHarbor aan') + '</a></p>' +
     '</form></section></div>';
 }
 function viewRegister() {
@@ -411,7 +415,7 @@ function viewRegister() {
         '<p class="switch"><a href="#/login">Terug naar inloggen</a></p></div>';
     } else {
       form = '<form class="login-card" data-form="request" novalidate style="max-width:460px">' +
-        '<div><h2>Crewdeck aanvragen</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Wij zetten je bedrijf klaar en sturen je de bedrijfscode en de inloggegevens van de eigenaar.</p></div>' +
+        '<div><h2>CrewHarbor aanvragen</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Wij zetten je bedrijf klaar en sturen je de bedrijfscode en de inloggegevens van de eigenaar.</p></div>' +
         (S.authError ? '<div class="alert error" role="alert">' + ICON.alert + '<span>' + esc(S.authError) + '</span></div>' : '') +
         '<div class="field"><label for="q-company">Bedrijfsnaam</label><input class="input" id="q-company" name="company" autocomplete="organization" required></div>' +
         '<div class="field"><label for="q-name">Jouw naam</label><input class="input" id="q-name" name="contactName" autocomplete="name" required></div>' +
@@ -419,19 +423,19 @@ function viewRegister() {
         '<div class="grid2"><div class="field"><label for="q-phone">Telefoon <span class="muted">(optioneel)</span></label><input class="input" id="q-phone" name="phone" type="tel" autocomplete="tel"></div>' +
         '<div class="field"><label for="q-emp">Aantal medewerkers</label><select class="input" id="q-emp" name="employees"><option value="">Kies…</option>' +
           ['1-5', '6-15', '16-50', '51-100', '100+'].map(o => '<option>' + o + '</option>').join('') + '</select></div></div>' +
-        '<div class="field"><label for="q-msg">Toelichting <span class="muted">(optioneel)</span></label><textarea class="input" id="q-msg" name="message" rows="3" placeholder="Waarvoor wil je Crewdeck gebruiken?"></textarea></div>' +
+        '<div class="field"><label for="q-msg">Toelichting <span class="muted">(optioneel)</span></label><textarea class="input" id="q-msg" name="message" rows="3" placeholder="Waarvoor wil je CrewHarbor gebruiken?"></textarea></div>' +
         '<div class="honeypot" aria-hidden="true"><label for="q-web">Website</label><input id="q-web" name="website" tabindex="-1" autocomplete="off"></div>' +
         '<button class="btn primary" type="submit" id="q-submit">Aanvraag versturen</button>' +
         '<p class="switch">Al een account? <a href="#/login">Inloggen</a></p></form>';
     }
-    return '<div class="login">' + brandPanel('Begin met Crewdeck.', 'Vraag Crewdeck aan voor je bedrijf. Wij zetten alles voor je klaar.') + '<section class="login-main">' + form + '</section></div>';
+    return '<div class="login">' + brandPanel('Begin met CrewHarbor.', 'Vraag CrewHarbor aan voor je bedrijf. Wij zetten alles voor je klaar.') + '<section class="login-main">' + form + '</section></div>';
   }
   if (!info.open) {
     form = '<div class="login-card"><h2>Registreren</h2><div class="alert info"><span>Op deze server kunnen geen nieuwe bedrijven worden aangemaakt. Vraag je beheerder om een account.</span></div>' +
       '<p class="switch"><a href="#/login">Terug naar inloggen</a></p></div>';
   } else {
     form = '<form class="login-card" data-form="register" novalidate style="max-width:460px">' +
-      '<div><h2>' + (info.firstSetup ? 'Crewdeck inrichten' : 'Bedrijf registreren') + '</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Je wordt eigenaar van het account en hebt altijd alle rechten.</p></div>' +
+      '<div><h2>' + (info.firstSetup ? 'CrewHarbor inrichten' : 'Bedrijf registreren') + '</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Je wordt eigenaar van het account en hebt altijd alle rechten.</p></div>' +
       (S.authError ? '<div class="alert error" role="alert">' + ICON.alert + '<span>' + esc(S.authError) + '</span></div>' : '') +
       '<div class="field"><label for="r-org">Bedrijfsnaam</label><input class="input" id="r-org" name="orgName" autocomplete="organization" required></div>' +
       '<div class="field"><label for="r-slug">Bedrijfscode</label><input class="input" id="r-slug" name="slug" autocapitalize="none" spellcheck="false" pattern="[a-z0-9][a-z0-9-]{2,29}" required aria-describedby="r-slug-h">' +
@@ -443,7 +447,7 @@ function viewRegister() {
       '<button class="btn primary" type="submit" id="r-submit">' + (info.firstSetup ? 'Inrichten' : 'Bedrijf aanmaken') + '</button>' +
       '<p class="switch">Al een account? <a href="#/login">Inloggen</a></p></form>';
   }
-  return '<div class="login">' + brandPanel('Begin vandaag met Crewdeck.', 'In één minuut staat je bedrijf klaar. Daarna voeg je je team toe.') + '<section class="login-main">' + form + '</section></div>';
+  return '<div class="login">' + brandPanel('Begin vandaag met CrewHarbor.', 'In één minuut staat je bedrijf klaar. Daarna voeg je je team toe.') + '<section class="login-main">' + form + '</section></div>';
 }
 
 // ----- navigatie (groepen die je kunt in- en uitklappen) -----
@@ -453,7 +457,7 @@ function navGroups() {
     { id: 'uren', label: 'Uren', items: [['uren', 'Mijn uren', 0, S.running ? 'live' : ''], ['rooster', 'Rooster'], ['beschikbaar', 'Beschikbaarheid'], ['verlof', 'Verlof & ziek', S.absPending],
       can('hours.approve') ? ['goedkeuren', 'Goedkeuren', S.pendingCount] : null, can('hours.view_all') ? ['urenoverzicht', 'Urenoverzicht'] : null, can('hours.kiosk') ? ['prikklok', 'Prikklok'] : null] },
     { id: 'kennis', label: 'Kennis', items: [['kennisbank', 'Kennisbank'], ['documenten', 'Documenten']] },
-    { id: 'leiding', label: 'Teamleiding', items: [can('team.board') ? ['team', 'Teambord'] : null, can('reports.view') ? ['cijfers', 'Cijfers'] : null, can('audit.view') ? ['logboek', 'Logboek'] : null] },
+    { id: 'leiding', label: 'Teamleiding', items: [can('team.board') ? ['team', 'Teambord'] : null, can('reports.view') ? ['cijfers', 'Cijfers'] : null, can('phone.view') ? ['telefonie', 'Telefonie'] : null, can('audit.view') ? ['logboek', 'Logboek'] : null] },
     { id: 'beheer', label: 'Beheer', items: [can('members.manage') || can('roles.manage') ? ['mensen', 'Mensen'] : null,
       can('members.manage') || can('roles.manage') ? ['rollen', 'Rollen & rechten'] : null, ['instellingen', 'Instellingen']] }
   ];
@@ -757,7 +761,7 @@ function taskErrors(T) {
   const e = {};
   if (!T.title.trim()) e.title = 'Geef de taak een titel';
   if (!Object.keys(T.sel).some(k => T.sel[k])) e.people = 'Kies minstens één persoon';
-  if (T.repeat !== 'none' && !T.dueAt) e.dueAt = 'Kies een deadline, dan weet Crewdeck wanneer de herhaling moet komen';
+  if (T.repeat !== 'none' && !T.dueAt) e.dueAt = 'Kies een deadline, dan weet CrewHarbor wanneer de herhaling moet komen';
   return e;
 }
 function viewTaskForm() {
@@ -936,7 +940,7 @@ function viewMemberPanel() {
       '<div class="field"><label for="m-name">Naam *</label><input class="input" id="m-name" placeholder="Bijv. Lisa of Lisa de Jong" autocomplete="off"><span class="small muted">Hiermee logt diegene in. Moet uniek zijn binnen je bedrijf.</span></div>' +
       '<div class="field"><label for="m-role">Rol</label><select class="input" id="m-role" data-act-change="m-role-new">' + roleOptions(sel) + '</select>' + permSummary(sel) + '</div>' +
       '<div class="detail-section"><button class="btn dark" data-act="m-create">Aanmaken en code maken</button><button class="btn ghost" data-act="m-cancel">Annuleren</button></div>' +
-      '<p class="small muted" style="margin:0">Crewdeck maakt een persoonlijke code van 6 cijfers. Die zie je één keer.</p></div>';
+      '<p class="small muted" style="margin:0">CrewHarbor maakt een persoonlijke code van 6 cijfers. Die zie je één keer.</p></div>';
   }
   const u = S.members.find(x => same(x.id, S.mSel) && !x.archived);
   if (!u) return '<p class="muted" style="margin:0">Kies iemand in de lijst om de gegevens te bekijken of aan te passen.</p>';
@@ -1028,8 +1032,125 @@ function viewSettings() {
       '<div class="field"><label for="o-cats">Categorieën voor terugbelverzoeken</label><textarea class="input" id="o-cats" rows="6" aria-describedby="o-cats-h">' + esc((s.categories || []).join('\n')) + '</textarea><span class="small muted" id="o-cats-h">Eén per regel.</span></div>' +
       '<div class="field"><label for="o-notes">Snelnotities</label><textarea class="input" id="o-notes" rows="6" aria-describedby="o-notes-h">' + esc((s.quick_notes || []).join('\n')) + '</textarea><span class="small muted" id="o-notes-h">Eén per regel. Deze knoppen staan bij elk terugbelverzoek.</span></div>' +
       '<div><button class="btn primary" data-act="o-save">Opslaan</button></div></section>';
+    h += viewPhoneLink();
   }
   return h + '</div>';
+}
+
+// ======================================================================
+// Telefonie (3CX)
+// ======================================================================
+function fmtDur(sec) {
+  if (sec == null) return '–';
+  sec = Math.round(sec);
+  if (sec < 60) return sec + ' sec';
+  if (sec < 3600) return Math.floor(sec / 60) + ':' + pad(sec % 60) + ' min';
+  return Math.floor(sec / 3600) + ' u ' + pad(Math.floor(sec % 3600 / 60)) + ' min';
+}
+function phRange() { return S.phPeriod === 'vandaag' ? [today(), today()] : periodRange(S.phPeriod); }
+function timeAgo(v) {
+  if (!v) return 'nog nooit';
+  const m = Math.round((Date.now() - new Date(v)) / 60000);
+  if (m < 1) return 'zojuist';
+  if (m < 60) return m + ' min geleden';
+  const d = new Date(v);
+  return (ymd(d) === today() ? 'vandaag' : dayShort(ymd(d))) + ' om ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+async function loadPhone() {
+  S.phStatus = await rpc('cd_phone_status');
+  if (S.phStatus.connected) {
+    const [f, t] = phRange();
+    S.phone = await rpc('cd_phone_stats', { p_from: f, p_to: t });
+    if (!S.phSyncing && Date.now() - S.phSyncedAt > 120000) phoneSync(false);
+  } else S.phone = null;
+}
+async function phoneSync(force) {
+  S.phSyncing = true; if (route() === 'telefonie') render();
+  try {
+    const r = await svc('phone-sync', { force: !!force });
+    S.phSyncedAt = Date.now();
+    if (force && r.error) toast(r.error, true);
+    else if (force && r.skipped) toast('Net al bijgewerkt. Probeer het zo nog eens.');
+    else if (force) toast('Bijgewerkt.');
+  } catch (e) { if (force) toast(e.message, true); }
+  S.phSyncing = false;
+  if (route() === 'telefonie') {
+    try {
+      S.phStatus = await rpc('cd_phone_status');
+      const [f, t] = phRange(); S.phone = await rpc('cd_phone_stats', { p_from: f, p_to: t });
+    } catch (e) { /* de vorige cijfers blijven staan */ }
+    render();
+  }
+}
+function viewPhone() {
+  const st = S.phStatus, P = S.phone;
+  let h = '<header class="page-head"><div><h1>Telefonie</h1><p>' + (st && st.connected ? 'Cijfers uit 3CX · bijgewerkt ' + esc(timeAgo(st.lastSync)) : 'Telefoontjes, reactietijd en gemiste gesprekken uit je 3CX-telefooncentrale.') + '</p></div>' +
+    (st && st.connected ? '<div class="actions"><button class="btn" data-act="ph-sync"' + (S.phSyncing ? ' disabled' : '') + '>' + (S.phSyncing ? 'Bezig met bijwerken…' : 'Nu bijwerken') + '</button></div>' : '') + '</header>';
+  if (!st) return h;
+  if (!st.connected) {
+    return h + '<section class="card empty-state"><h2>Nog niet gekoppeld</h2><p class="muted">Koppel CrewHarbor één keer met jullie 3CX. Daarna zie je hier hoeveel telefoontjes er binnenkomen, hoe snel ze worden opgenomen, hoe lang gesprekken duren, welke gemist zijn en hoeveel mensen jullie zelf bellen.</p>' +
+      (st.canManage ? '<p><a class="btn primary" href="#/instellingen">Koppelen bij Instellingen</a></p>' : '<p class="small muted">Vraag iemand die de bedrijfsinstellingen beheert om de koppeling aan te zetten.</p>') + '</section>';
+  }
+  if (st.lastError) h += '<div class="alert error" role="alert">' + ICON.alert + '<span><strong>Bijwerken lukt niet:</strong> ' + esc(st.lastError) + (st.canManage ? ' Controleer de koppeling bij <a href="#/instellingen">Instellingen</a>.' : '') + '</span></div>';
+  const periods = [['vandaag', 'Vandaag'], ['week', 'Deze week'], ['vorigeweek', 'Vorige week'], ['maand', 'Deze maand'], ['vorigemaand', 'Vorige maand']];
+  h += '<div class="seg" role="group" aria-label="Periode">' + periods.map(p => '<button data-act="ph-period" data-v="' + p[0] + '" class="' + (S.phPeriod === p[0] ? 'on' : '') + '" aria-pressed="' + (S.phPeriod === p[0]) + '">' + p[1] + '</button>').join('') + '</div>';
+  if (!P) return h;
+  const T = P.totals;
+  const pct = T.inbound ? Math.round(T.answered / T.inbound * 100) : null;
+  h += '<div class="stats">' + stat('Inkomende telefoontjes', T.inbound) + stat('Opgenomen', T.answered + (pct == null ? '' : ' <small class="muted" style="font-size:14px;font-weight:600">' + pct + '%</small>'), 'var(--green)') +
+    stat('Niet opgenomen', T.missed, T.missed ? 'var(--red)' : null) + stat('Gem. reactietijd', fmtDur(T.avgWaitSec)) + '</div>';
+  h += '<div class="stats">' + stat('Gem. gespreksduur', fmtDur(T.avgTalkSec)) + stat('Zelf gebeld', T.outbound) + stat('Mensen gebeld', T.outboundPeople) + stat('Totale beltijd', fmtDur(T.talkSec)) + '</div>';
+  if (P.perDay.length > 1) {
+    const max = Math.max(1, ...P.perDay.map(d => Math.max(d.inbound, d.outbound)));
+    const every = P.perDay.length > 31 ? 7 : (P.perDay.length > 10 ? 3 : 1);
+    h += '<section class="card"><div class="section-title" style="margin-bottom:12px"><h2>Per dag</h2><span class="legend-row"><span class="dot water"></span>Inkomend <span class="dot red"></span>Gemist <span class="dot navy"></span>Zelf gebeld</span></div>' +
+      '<div class="chart" role="img" aria-label="Telefoontjes per dag: inkomend, gemist en zelf gebeld">' + P.perDay.map((d, i) => {
+        const dt = pd(d.date);
+        return '<div class="bar-group" title="' + esc(DAYS[dt.getDay()] + ' ' + dt.getDate() + ' ' + MONTHS[dt.getMonth()] + ': ' + d.inbound + ' inkomend, ' + d.missed + ' gemist, ' + d.outbound + ' zelf gebeld') + '">' +
+          '<div class="bars three"><span class="bar water" style="height:' + (d.inbound / max * 100) + '%"></span><span class="bar red" style="height:' + (d.missed / max * 100) + '%"></span><span class="bar navy" style="height:' + (d.outbound / max * 100) + '%"></span></div>' +
+          '<span class="bar-label">' + (i % every === 0 ? dt.getDate() + ' ' + MONTHS[dt.getMonth()] : '') + '</span></div>';
+      }).join('') + '</div></section>';
+  }
+  const hmax = Math.max(1, ...P.perHour.map(x => x.inbound));
+  h += '<div class="split" style="align-items:stretch"><section class="card" style="flex:1 1 300px;min-width:0"><h2>Drukste uren</h2>' +
+    (T.inbound ? P.perHour.map(x => '<div class="hbar"><span>' + pad(x.hour) + ':00 – ' + pad(x.hour + 1) + ':00</span><span class="hbar-track"><span style="width:' + (x.inbound / hmax * 100) + '%"></span></span><strong>' + x.inbound + '</strong></div>').join('') +
+      '<p class="small muted" style="margin:8px 0 0">Inkomende telefoontjes per uur in deze periode.</p>' : '<p class="muted small">Nog geen inkomende telefoontjes in deze periode.</p>') + '</section>';
+  h += '<section class="card" style="flex:1 1 300px;min-width:0"><h2>Niet opgenomen</h2>' + (P.missedList.length
+    ? '<ul class="ph-missed">' + P.missedList.map(m => { const d = new Date(m.at); return '<li><span>' + esc((ymd(d) === today() ? 'Vandaag' : dayShort(ymd(d))) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())) + '</span>' +
+        (m.number ? '<a href="tel:' + esc(m.number) + '">' + esc(m.number) + '</a>' : '<span class="muted">Anoniem</span>') + '<span class="small muted">' + fmtDur(m.waitSec) + ' gewacht</span></li>'; }).join('') + '</ul>' +
+      (T.missed > P.missedList.length ? '<p class="small muted" style="margin:8px 0 0">De laatste ' + P.missedList.length + ' van ' + T.missed + '.</p>' : '')
+    : '<p class="muted small">Alles is opgenomen in deze periode.</p>') + '</section></div>';
+  h += '<section class="card"><h2>Per collega</h2>' + (P.people.length
+    ? '<div class="table-wrap" style="border:0"><table><thead><tr><th>Naam in 3CX</th><th>Opgenomen</th><th>Zelf gebeld</th><th>Gem. reactietijd</th><th>Gem. gespreksduur</th><th>Totale beltijd</th></tr></thead><tbody>' +
+      P.people.map(x => '<tr><td class="pad"><strong>' + esc(x.agent) + '</strong></td><td class="pad">' + x.answered + '</td><td class="pad">' + x.outbound + '</td><td class="pad">' + fmtDur(x.avgWaitSec) +
+        '</td><td class="pad">' + fmtDur(x.avgTalkSec) + '</td><td class="pad">' + fmtDur(x.talkSec) + '</td></tr>').join('') + '</tbody></table></div>'
+    : '<p class="muted small">Nog geen gesprekken in deze periode.</p>') + '</section>';
+  h += '<p class="small muted" style="margin:0">Reactietijd = hoe lang de beller wachtte tot er werd opgenomen. Interne gesprekken tellen niet mee.</p>';
+  return h;
+}
+function viewPhoneLink() {
+  const st = S.phStatus;
+  let h = '<section class="card stack" style="gap:14px"><h2>Telefonie (3CX)</h2>';
+  if (!st) return h + '<p class="small muted">Status kon niet worden geladen.</p></section>';
+  if (st.connected && !S.phEdit) {
+    h += '<dl class="kv"><dt>Status</dt><dd>' + (st.lastError ? '<span class="badge red">Fout</span>' : '<span class="badge green">Gekoppeld</span>') + '</dd><dt>Adres</dt><dd>' + esc(st.baseUrl) + '</dd><dt>Client ID</dt><dd>' + esc(st.clientId) + '</dd>' +
+      '<dt>Bijgewerkt</dt><dd>' + esc(timeAgo(st.lastSync)) + '</dd><dt>Gesprekken</dt><dd>' + st.calls + '</dd></dl>' +
+      (st.lastError ? '<div class="alert error" role="alert">' + ICON.alert + '<span>' + esc(st.lastError) + '</span></div>' : '');
+    if (S.phDisc) {
+      return h + '<div class="box"><p style="margin:0">CrewHarbor haalt dan niets meer op uit 3CX.</p><label class="check"><input type="checkbox" id="ph-del"> Ook de opgehaalde gespreksgegevens verwijderen</label>' +
+        '<div class="ph-btns"><button class="btn danger" data-act="ph-disconnect">Loskoppelen</button><button class="btn ghost" data-act="ph-disc-cancel">Annuleren</button></div></div></section>';
+    }
+    return h + '<div class="ph-btns"><a class="btn" href="#/telefonie">Bekijk cijfers</a><button class="btn" data-act="ph-edit">Gegevens wijzigen</button><button class="btn ghost" data-act="ph-disc">Loskoppelen</button></div></section>';
+  }
+  h += '<p class="small muted" style="margin:0">Laat zien hoeveel telefoontjes er binnenkomen, hoe snel ze worden opgenomen en welke gemist zijn. Werkt met 3CX versie 20.</p>' +
+    '<ol class="small muted" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px"><li>Ga in 3CX naar <strong>Admin Console → Integrations → API</strong> en klik op <strong>Add</strong>.</li>' +
+    '<li>Kies een Client ID (bijvoorbeeld 900), zet <strong>XAPI Access</strong> aan en geef de rol <strong>System Owner</strong> of <strong>System Admin</strong>.</li><li>Sla op en kopieer de API-sleutel die 3CX één keer laat zien.</li></ol>' +
+    '<div class="field"><label for="ph-url">Adres van je 3CX</label><input class="input" id="ph-url" placeholder="https://bedrijf.3cx.nl" autocomplete="off" spellcheck="false" value="' + esc(st.baseUrl || '') + '"></div>' +
+    '<div class="field"><label for="ph-id">Client ID</label><input class="input" id="ph-id" autocomplete="off" spellcheck="false" value="' + esc(st.clientId || '') + '"></div>' +
+    '<div class="field"><label for="ph-key">API-sleutel</label><input class="input" id="ph-key" type="password" autocomplete="new-password" spellcheck="false"' + (st.connected ? ' placeholder="Vul de sleutel opnieuw in"' : '') + '>' +
+      '<span class="small muted">Wordt alleen op de server bewaard en is daarna voor niemand meer zichtbaar.</span></div>' +
+    '<div class="ph-btns"><button class="btn primary" data-act="ph-connect">Koppelen</button>' + (S.phEdit ? '<button class="btn ghost" data-act="ph-edit-cancel">Annuleren</button>' : '') + '</div></section>';
+  return h;
 }
 
 // ======================================================================
@@ -1522,7 +1643,7 @@ function viewKioskAdmin() {
   let h = '<header class="page-head"><div><h1>Prikklok</h1><p>Zet een tablet of pc bij de ingang neer. Medewerkers tikken hun naam aan en bevestigen met hun eigen code.</p></div></header>';
   h += '<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">';
   h += '<section class="card stack" style="gap:14px"><h2 style="margin:0">Dit apparaat als prikklok</h2>' +
-    '<p class="small muted" style="margin:0">Je wordt op dit apparaat uitgelogd. Daarna staat hier alleen nog de prikklok. Niemand kan via de prikklok bij de rest van Crewdeck.</p>' +
+    '<p class="small muted" style="margin:0">Je wordt op dit apparaat uitgelogd. Daarna staat hier alleen nog de prikklok. Niemand kan via de prikklok bij de rest van CrewHarbor.</p>' +
     '<div class="field"><label for="kiosk-name">Naam van dit apparaat</label><input class="input" id="kiosk-name" maxlength="60" placeholder="Bijv. Tablet bij de ingang" value="' + esc(S.kioskName) + '"></div>' +
     '<div><button class="btn primary" data-act="kiosk-setup">Prikklok starten op dit apparaat</button></div></section>';
   h += '<section class="card stack" style="gap:14px"><h2 style="margin:0">Waar mag je inklokken?</h2>' +
@@ -1535,7 +1656,7 @@ function viewKioskAdmin() {
       '<div class="doc-act"><button class="btn small danger" data-act="kiosk-revoke" data-id="' + k.id + '">Uitzetten</button></div></div>').join('') + '</div>'
       : '<div class="empty">Nog geen prikklokken. Start er een op het apparaat dat bij de ingang komt te staan.</div>') +
     (here ? '<div class="alert info" style="align-items:center;justify-content:space-between;flex-wrap:wrap"><span>Dit apparaat is als prikklok ingesteld.</span><button class="btn small primary" data-act="kiosk-reopen">Prikklok weer openen</button></div>' : '') +
-    '<p class="small muted" style="margin:0">Prikklok verlaten: tik op het apparaat 5 keer snel op het Crewdeck-logo linksboven en log in met je eigen naam en code. Dat kan alleen met het recht "Prikklok verlaten met eigen code".</p></section>';
+    '<p class="small muted" style="margin:0">Prikklok verlaten: tik op het apparaat 5 keer snel op het CrewHarbor-logo linksboven en log in met je eigen naam en code. Dat kan alleen met het recht "Prikklok verlaten met eigen code".</p></section>';
   return h;
 }
 
@@ -1575,7 +1696,7 @@ function viewKiosk() {
     const goingIn = !P || !P.in;
     body = '<div class="kiosk-pad"><button class="btn ghost" data-act="k-cancel">' + ICON.left + 'Terug</button>' +
       '<div class="kiosk-who">' + avatar(P.id, P.name, 'xl') + '<div><h1>' + esc(P.name) + '</h1><p>' + (goingIn ? 'Inklokken' + (P.shift ? ' · ingepland ' + esc(P.shift) : '') : 'Uitklokken · binnen sinds ' + esc(P.in)) + '</p></div></div>' +
-      '<label class="kiosk-label" id="k-lab">Voer je code in, of de klokcode uit de Crewdeck-app</label>' +
+      '<label class="kiosk-label" id="k-lab">Voer je code in, of de klokcode uit de CrewHarbor-app</label>' +
       '<div class="kiosk-dots' + (K.err ? ' bad' : '') + '" aria-labelledby="k-lab" aria-live="polite">' + (K.code ? K.code.split('').map(() => '<span></span>').join('') : '<em>••••••</em>') + '</div>' +
       (K.err ? '<p class="kiosk-err" role="alert">' + esc(K.err) + '</p>' : '') +
       '<div class="keypad">' + ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'].map(k =>
@@ -1592,7 +1713,7 @@ function viewKiosk() {
         '<strong>' + esc(p.name) + '</strong><small>' + (p.in ? '<span class="live-dot"></span> Binnen sinds ' + esc(p.in) : p.shift ? 'Ingepland ' + esc(p.shift) : 'Niet ingeklokt') + '</small></button>').join('') + '</div></div>';
   }
   return '<div class="kiosk">' + head + '<main class="kiosk-main">' + body + '</main>' +
-    '<footer class="kiosk-foot">Klokken met je eigen code. Klopt er iets niet? Pas je uren aan in Crewdeck of meld het bij je leidinggevende.</footer></div>';
+    '<footer class="kiosk-foot">Klokken met je eigen code. Klopt er iets niet? Pas je uren aan in CrewHarbor of meld het bij je leidinggevende.</footer></div>';
 }
 let kioskTimer = null;
 function kioskReset(delay) { clearTimeout(kioskTimer); kioskTimer = setTimeout(async () => { K.sel = null; K.code = ''; K.err = null; K.result = null; K.exit = null; await loadKiosk(); if (route() === 'klok') render(); }, delay); }
@@ -1940,7 +2061,7 @@ $app.addEventListener('submit', async e => {
       const d = await svc('register', { orgName: v('orgName'), slug: v('slug').toLowerCase(), ownerName: v('ownerName'), code: v('code'), website: v('website') });
       if (d.session) await sb.auth.setSession(d.session);
       try { localStorage.setItem('crewdeck-company', d.slug); } catch (err) { /* */ }
-      toast('Welkom bij Crewdeck! Je bedrijf staat klaar.');
+      toast('Welkom bij CrewHarbor! Je bedrijf staat klaar.');
     }
     await loadSession();
     S.authError = null; S.seen = null;
@@ -2331,6 +2452,30 @@ $app.addEventListener('click', async e => {
         S.repFrom = f; S.repTo = t; break;
       }
       case 'rep-csv': exportCsv(); return;
+
+      // telefonie
+      case 'ph-period': S.phPeriod = el.dataset.v; break;
+      case 'ph-sync': phoneSync(true); return;
+      case 'ph-edit': S.phEdit = true; render(); return;
+      case 'ph-edit-cancel': S.phEdit = false; render(); return;
+      case 'ph-disc': S.phDisc = true; render(); return;
+      case 'ph-disc-cancel': S.phDisc = false; render(); return;
+      case 'ph-disconnect': {
+        const del = (document.getElementById('ph-del') || {}).checked === true;
+        await rpc('cd_phone_disconnect', { p_delete_calls: del });
+        S.phDisc = false; S.phEdit = false; S.phone = null; toast('Telefonie losgekoppeld.'); break;
+      }
+      case 'ph-connect': {
+        const v = id => document.getElementById(id).value.trim();
+        if (!v('ph-url') || !v('ph-id') || !v('ph-key')) { toast('Vul het adres, de Client ID en de API-sleutel in.', true); return; }
+        el.disabled = true; el.textContent = 'Verbinden met 3CX…';
+        try {
+          const r = await svc('phone-connect', { baseUrl: v('ph-url'), clientId: v('ph-id'), secret: v('ph-key') });
+          S.phEdit = false; S.phSyncedAt = Date.now();
+          toast(r.error ? 'Gekoppeld, maar ophalen lukte nog niet: ' + r.error : 'Gekoppeld met 3CX. ' + (r.synced || 0) + ' gesprekken van de afgelopen maand opgehaald.', !!r.error);
+        } catch (e) { el.disabled = false; el.textContent = 'Koppelen'; throw e; }
+        break;
+      }
 
       // kennisbank
       case 'kb-cat': S.kbCat = el.dataset.v; break;

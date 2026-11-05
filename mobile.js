@@ -1,4 +1,4 @@
-/* Crewdeck — eenvoudige app-weergave (Android-app)
+/* CrewHarbor — eenvoudige app-weergave (Android-app)
  * Alleen: klokcode, taken, terugbellen, uren in het kort en je account. Al het andere gaat via de website.
  * Gebruikt de gedeelde staat en hulpjes uit app.js.
  */
@@ -121,7 +121,7 @@ function mHours() {
   if (M.next && M.next.shifts.length) {
     h += '<section class="m-card"><p class="m-label">Volgende week</p>' + M.next.shifts.map(s => '<div class="m-row"><span>' + esc(dayShort(s.date)) + '</span><strong>' + esc(s.start + '–' + s.end) + '</strong>' + (s.note ? '<span class="small muted">' + esc(s.note) + '</span>' : '') + '</div>').join('') + '</section>';
   }
-  h += '<p class="m-site">Uren aanpassen of indienen, verlof aanvragen en het hele rooster: ' + (SITE ? '<a href="' + esc(SITE) + '" target="_blank" rel="noopener">open de website</a>' : 'via de website van Crewdeck') + '.</p>';
+  h += '<p class="m-site">Uren aanpassen of indienen, verlof aanvragen en het hele rooster: ' + (SITE ? '<a href="' + esc(SITE) + '" target="_blank" rel="noopener">open de website</a>' : 'via de website van CrewHarbor') + '.</p>';
   return h;
 }
 

@@ -1,12 +1,12 @@
 {
-  "name": "Crewdeck",
-  "short_name": "Crewdeck",
-  "description": "Terugbelverzoeken, taken en teamwerk op één plek.",
+  "name": "CrewHarbor",
+  "short_name": "CrewHarbor",
+  "description": "De vaste haven voor je team.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#F4F6F8",
-  "theme_color": "#0B1220",
+  "background_color": "#F4F7F7",
+  "theme_color": "#0D2340",
   "lang": "nl",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
