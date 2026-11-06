@@ -128,13 +128,17 @@ function mHours() {
 // ---------- account ----------
 function mAccount() {
   let h = '<h1 class="m-h1">Account</h1><section class="m-card m-me">' + avatar(S.me.id, S.me.name, 'lg') + '<div><strong>' + esc(S.me.name) + '</strong><span>' + esc(S.roleName) + ' · ' + esc(S.org.name) + '</span>' +
-    '<span>Bedrijfscode: ' + esc(S.org.slug) + '</span></div></section>';
+    '<span>' + (S.me.legacy ? 'Bedrijfscode: ' + esc(S.org.slug) : esc(S.me.email || '')) + '</span></div></section>';
+  if (S.me.legacy) h += '<section class="m-card"><p class="m-label">Koppel je e-mailadres</p><p class="small" style="margin:0">Inloggen met een code verdwijnt. Koppel op de website bij Instellingen je e-mailadres en kies een wachtwoord.</p></section>';
   h += '<section class="m-card"><p class="m-label">Contract</p><strong>' + esc(contractText(S.me)) + '</strong></section>';
+  const pw = !S.me.legacy;
   h += '<section class="m-card">' + (M.codeForm
-    ? '<p class="m-label">Nieuwe code (6 tot 12 cijfers)</p><input class="input code-input" id="m-c1" type="password" inputmode="numeric" autocomplete="new-password" placeholder="Nieuwe code">' +
-      '<input class="input code-input" id="m-c2" type="password" inputmode="numeric" autocomplete="new-password" placeholder="Herhaal" style="margin-top:8px">' +
+    ? (pw ? '<p class="m-label">Nieuw wachtwoord (minstens 10 tekens)</p><input type="email" autocomplete="username" value="' + esc(S.me.email || '') + '" hidden><input class="input" id="m-c1" type="password" autocomplete="new-password" placeholder="Nieuw wachtwoord">' +
+        '<input class="input" id="m-c2" type="password" autocomplete="new-password" placeholder="Herhaal" style="margin-top:8px">'
+      : '<p class="m-label">Nieuwe code (6 tot 12 cijfers)</p><input class="input code-input" id="m-c1" type="password" inputmode="numeric" autocomplete="new-password" placeholder="Nieuwe code">' +
+        '<input class="input code-input" id="m-c2" type="password" inputmode="numeric" autocomplete="new-password" placeholder="Herhaal" style="margin-top:8px">') +
       '<div class="m-actions"><button class="btn ghost" data-mact="code-cancel">Annuleren</button><button class="btn dark" data-mact="code-save">Opslaan</button></div>'
-    : '<button class="m-link" data-mact="code-open">Inlogcode wijzigen' + ICON.right + '</button>') +
+    : '<button class="m-link" data-mact="code-open">' + (pw ? 'Wachtwoord wijzigen' : 'Inlogcode wijzigen') + ICON.right + '</button>') +
     '<button class="m-link" data-mact="sound">Geluid bij nieuw werk<span>' + (prefs.sound ? 'aan' : 'uit') + '</span></button>' +
     (SITE ? '<a class="m-link" href="' + esc(SITE) + '" target="_blank" rel="noopener">Naar de website' + ICON.right + '</a>' : '') +
     '<button class="m-link danger" data-mact="logout">Uitloggen</button></section>';
@@ -168,6 +172,14 @@ document.addEventListener('click', async e => {
       case 'code-open': M.codeForm = true; render(); return;
       case 'code-cancel': M.codeForm = false; render(); return;
       case 'code-save': {
+        if (!S.me.legacy) {
+          const p1 = document.getElementById('m-c1').value, p2 = document.getElementById('m-c2').value;
+          const pr = window.CHMFA.passwordProblem(p1, S.me.email); if (pr) { toast(pr, true); return; }
+          if (p1 !== p2) { toast('De twee wachtwoorden zijn niet hetzelfde.', true); return; }
+          const { error } = await sb.auth.updateUser({ password: p1 });
+          if (error) throw new Error(error.message);
+          M.codeForm = false; toast('Je nieuwe wachtwoord is opgeslagen.'); render(); return;
+        }
         const c1 = document.getElementById('m-c1').value.trim(), c2 = document.getElementById('m-c2').value.trim();
         if (!/^\d{6,12}$/.test(c1)) { toast('Een code bestaat uit 6 tot 12 cijfers.', true); return; }
         if (c1 !== c2) { toast('De twee codes zijn niet hetzelfde.', true); return; }

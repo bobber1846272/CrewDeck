@@ -8,13 +8,15 @@ const CFG = window.CREWDECK_CONFIG || {};
 const sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, {
   auth: { storageKey: 'crewdeck-admin-auth', persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
 });
+window.CHMFA.use(sb);
 const $app = document.getElementById('app');
 const SITE = (CFG.siteUrl || (location.origin + location.pathname.replace(/admin\.html$/, ''))).replace(/\/?$/, '/');
 
 const A = {
   ready: false, data: null, screen: 'login', err: null, busy: false,
   tab: 'aanvragen', reqFilter: 'nieuw', q: '',
-  create: null, created: null, rejectFor: null, blockFor: null, editOrg: null, orgSel: null, codeFor: null, delFor: null, addAdmin: false
+  create: null, created: null, rejectFor: null, blockFor: null, editOrg: null, orgSel: null, codeFor: null, delFor: null, addAdmin: false,
+  mfa: null, mail: null, mfaResetFor: null
 };
 
 // ---------- hulpjes ----------
@@ -52,7 +54,7 @@ async function rpc(name, args) {
   const { data, error } = await sb.rpc(name, args || {});
   if (error) {
     if (error.code === '42501' || error.code === 'PGRST301' || /JWT/i.test(error.message)) { await logout('Je bent uitgelogd. Log opnieuw in.'); }
-    throw new Error(String(error.message || 'Er ging iets mis.').replace(/^.*?ERROR:\s*/, ''));
+    const err = new Error(String(error.message || 'Er ging iets mis.').replace(/^.*?ERROR:\s*/, '')); err.code = error.code; throw err;
   }
   return data;
 }
@@ -75,7 +77,33 @@ async function load() {
 }
 async function logout(msg) {
   try { await sb.auth.signOut({ scope: 'local' }); } catch (e) { /* */ }
-  A.data = null; A.screen = 'login'; A.err = msg || null; render();
+  A.data = null; A.mfa = null; A.screen = 'login'; A.err = msg || null; render();
+}
+// Na inloggen: tweestapsverificatie is verplicht voor Beheer
+async function enter() {
+  try { await load(); A.mfa = null; return true; }
+  catch (e) {
+    if (e.code !== 'CH001' && e.code !== 'CH002') throw e;
+    A.data = null; A.mfa = { mode: e.code === 'CH001' ? 'verify' : 'setup', msg: e.message };
+    render();
+    if (A.mfa.mode === 'setup') {
+      try { Object.assign(A.mfa, await window.CHMFA.enrollStart()); } catch (x) { A.mfa.err = x.message; }
+      render();
+    }
+    const c = document.getElementById('mfa-code'); if (c) c.focus();
+    return false;
+  }
+}
+function viewMfa() {
+  const M = A.mfa, setup = M.mode === 'setup';
+  return shell('<form class="login-card" data-form="mfa" novalidate><div><h2>Tweestapsverificatie</h2><p class="muted" style="margin:6px 0 0;font-size:14px">' +
+      esc(setup ? 'Verplicht voor CrewHarbor Beheer. Scan de QR-code met een authenticator-app (bijvoorbeeld Microsoft Authenticator of Google Authenticator) en vul de code in.' : 'Vul de 6 cijfers uit je authenticator-app in.') + '</p></div>' +
+    (M.err ? '<div class="alert error" role="alert"><span>' + esc(M.err) + '</span></div>' : '') +
+    (setup ? (M.qr ? '<div class="mfa-qr"><img src="' + esc(M.qr) + '" width="184" height="184" alt="QR-code voor je authenticator-app"></div>' +
+        '<details class="small"><summary>Kun je niet scannen? Vul deze sleutel handmatig in</summary><code class="mfa-secret">' + esc(window.CHMFA.groupSecret(M.secret)) + '</code></details>' : '<p class="muted">QR-code maken…</p>') : '') +
+    '<div class="field"><label for="mfa-code">Code uit de app</label><input class="input code-input" id="mfa-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required></div>' +
+    '<button class="btn primary" type="submit"' + (M.busy ? ' disabled' : '') + '>' + (M.busy ? 'Controleren…' : setup ? 'Aanzetten' : 'Bevestigen') + '</button>' +
+    '<p class="switch"><a href="#" data-act="logout">Uitloggen</a></p></form>');
 }
 
 // ---------- schermen: inrichten en inloggen ----------
@@ -109,8 +137,8 @@ function viewSetup() {
 function viewPanel() {
   const d = A.data;
   const open = d.requests.filter(r => r.status === 'nieuw').length;
-  const tabs = [['aanvragen', 'Aanvragen', open], ['bedrijven', 'Bedrijven', d.orgs.length], ['beheerders', 'Beheerders', 0], ['logboek', 'Logboek', 0]];
-  const body = { aanvragen: viewRequests, bedrijven: viewOrgs, beheerders: viewAdmins, logboek: viewLog }[A.tab]();
+  const tabs = [['aanvragen', 'Aanvragen', open], ['bedrijven', 'Bedrijven', d.orgs.length], ['beheerders', 'Beheerders', 0], ['mail', 'Mail', 0], ['logboek', 'Logboek', 0]];
+  const body = { aanvragen: viewRequests, bedrijven: viewOrgs, beheerders: viewAdmins, mail: viewMail, logboek: viewLog }[A.tab]();
   return '<div class="adm">' +
     '<header class="adm-top"><div class="adm-brand"><span class="logo">' + LOGO(28) + '</span><span class="adm-sub">Beheer</span></div>' +
       '<div class="adm-me"><span>' + esc(d.me.name) + '</span><button class="btn small ghost" data-act="logout">Uitloggen</button></div></header>' +
@@ -123,6 +151,24 @@ function viewPanel() {
         '<button class="btn primary" data-act="new-org">+ Bedrijf aanmaken</button></div>' +
       (A.created ? viewCreated() : '') + (A.create ? viewCreateForm() : '') + body +
     '</main></div>';
+}
+function viewMail() {
+  const m = A.mail;
+  if (!m) return '<div class="empty">Laden…</div>';
+  return '<section class="card"><div class="item-top"><h2 style="margin:0">Mail versturen</h2>' + (m.configured ? '<span class="badge green">Ingesteld</span>' : '<span class="badge orange">Nog niet ingesteld</span>') + '</div>' +
+    '<p class="small muted">Uitnodigingen en wachtwoordlinks gaan vanaf dit adres. Gebruik een mailbox op je eigen domein, bijvoorbeeld <strong>noreply@crewharbor.nl</strong>. Het wachtwoord wordt versleuteld opgeslagen en is hierna niet meer te zien.</p>' +
+    (m.keyOk === false ? '<div class="alert error" role="alert"><span>De versleutelsleutel (CREWHARBOR_KEY) ontbreekt nog op de server. Zonder die sleutel kan het wachtwoord niet veilig worden opgeslagen.</span></div>' : '') +
+    '<form class="box" data-form="mail" novalidate><div class="fields2">' +
+      '<div class="field"><label for="ml-host">Mailserver (SMTP)</label><input class="input" id="ml-host" name="host" value="' + esc(m.host) + '" placeholder="smtp.transip.email" autocapitalize="none" spellcheck="false"></div>' +
+      '<div class="field"><label for="ml-port">Poort</label><input class="input" id="ml-port" name="port" inputmode="numeric" value="' + esc(m.port || 465) + '"><span class="small muted">465 (SSL/TLS). 25 en 587 werken niet op de server.</span></div>' +
+      '<div class="field"><label for="ml-user">Gebruikersnaam</label><input class="input" id="ml-user" name="user" value="' + esc(m.user) + '" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="noreply@crewharbor.nl"></div>' +
+      '<div class="field"><label for="ml-pass">Wachtwoord van de mailbox</label><input class="input" id="ml-pass" name="pass" type="password" autocomplete="new-password" placeholder="' + (m.hasPass ? 'Opgeslagen · leeg laten om te houden' : '') + '"></div>' +
+      '<div class="field"><label for="ml-from">Afzenderadres</label><input class="input" id="ml-from" name="from" type="email" value="' + esc(m.from) + '" placeholder="noreply@crewharbor.nl" autocapitalize="none" spellcheck="false"></div>' +
+      '<div class="field"><label for="ml-name">Naam afzender</label><input class="input" id="ml-name" name="fromName" value="' + esc(m.fromName || 'CrewHarbor') + '"></div>' +
+      '<div class="field full"><label for="ml-site">Adres van de website</label><input class="input" id="ml-site" name="siteUrl" value="' + esc(m.siteUrl || SITE) + '" autocapitalize="none" spellcheck="false"><span class="small muted">De links in de mails gaan hierheen.</span></div>' +
+    '</div><div class="row"><button class="btn primary" type="submit">Opslaan</button></div></form>' +
+    '<form class="box" data-form="mail-test" novalidate style="margin-top:14px"><div class="field"><label for="ml-to">Testmail sturen naar</label><input class="input" id="ml-to" name="to" type="email" autocapitalize="none" spellcheck="false"></div>' +
+      '<div class="row"><button class="btn" type="submit"' + (m.configured ? '' : ' disabled') + '>Testmail sturen</button></div></form></section>';
 }
 const stat = (label, n) => '<div class="stat"><span>' + label + '</span><strong>' + n + '</strong></div>';
 
@@ -164,14 +210,22 @@ function viewCreateForm() {
     '<div class="fields2">' +
       '<div class="field"><label for="c-org">Bedrijfsnaam</label><input class="input" id="c-org" name="orgName" value="' + esc(c.orgName) + '" required></div>' +
       '<div class="field"><label for="c-slug">Bedrijfscode</label><input class="input" id="c-slug" name="slug" value="' + esc(c.slug) + '" autocapitalize="none" spellcheck="false" required aria-describedby="c-slug-h">' +
-        '<span class="small muted" id="c-slug-h">Hiermee logt het team in. 3 tot 30 tekens: kleine letters, cijfers en -</span></div>' +
+        '<span class="small muted" id="c-slug-h">Korte naam voor het bedrijf. 3 tot 30 tekens: kleine letters, cijfers en -</span></div>' +
       '<div class="field"><label for="c-owner">Naam van de eigenaar</label><input class="input" id="c-owner" name="ownerName" value="' + esc(c.ownerName) + '" required aria-describedby="c-owner-h">' +
-        '<span class="small muted" id="c-owner-h">Waarmee de eigenaar inlogt. Hij krijgt alle rechten.</span></div>' +
+        '<span class="small muted" id="c-owner-h">Krijgt alle rechten.</span></div>' +
+      '<div class="field"><label for="c-oemail">E-mailadres van de eigenaar</label><input class="input" id="c-oemail" name="ownerEmail" type="email" value="' + esc(c.ownerEmail || '') + '" autocapitalize="none" spellcheck="false" required aria-describedby="c-oemail-h">' +
+        '<span class="small muted" id="c-oemail-h">Hier komt de uitnodiging naartoe. Hiermee logt de eigenaar in.</span></div>' +
       '<div class="field"><label for="c-cname">Contactpersoon</label><input class="input" id="c-cname" name="contactName" value="' + esc(c.contactName) + '"></div>' +
       '<div class="field"><label for="c-mail">E-mail contactpersoon</label><input class="input" id="c-mail" name="contactEmail" type="email" value="' + esc(c.contactEmail) + '"></div>' +
       '<div class="field"><label for="c-tel">Telefoon</label><input class="input" id="c-tel" name="contactPhone" type="tel" value="' + esc(c.contactPhone) + '"></div>' +
-    '</div><p class="small muted" style="margin:0">De eigenaar krijgt een code van 8 cijfers. Die zie je hierna één keer; daarna kan de eigenaar hem zelf wijzigen bij Instellingen.</p>' +
+    '</div><p class="small muted" style="margin:0">De eigenaar krijgt een mail met een link om een wachtwoord te kiezen. De link werkt 7 dagen.</p>' +
     '<div class="row"><button class="btn primary" type="submit"' + (A.busy ? ' disabled' : '') + '>' + (A.busy ? 'Bezig…' : 'Aanmaken') + '</button></div></form>';
+}
+function inviteMessage(r) {
+  const greet = r.ownerName ? 'Hoi ' + r.ownerName.split(/\s+/)[0] + ',' : 'Hoi,';
+  return greet + '\n\n' + (r.isNewCode ? 'Hierbij een link om een nieuw wachtwoord te kiezen voor CrewHarbor:' : 'Je CrewHarbor-account voor ' + r.orgName + ' staat klaar! Kies via deze link je wachtwoord:') + '\n\n' + r.link +
+    '\n\nDe link werkt ' + (r.isNewCode && !r.invite ? '1 uur' : '7 dagen') + ' en is maar één keer te gebruiken. Daarna log je in op ' + SITE + ' met ' + r.ownerEmail + ' en je wachtwoord.' +
+    (r.isNewCode ? '' : '\n\nJe team voeg je toe bij Mensen; zij krijgen dan zelf een uitnodiging.') + '\n\nGroet,\n' + (A.data ? A.data.me.name : '');
 }
 function loginMessage(r, isNewCode) {
   const greet = r.contactName ? 'Hoi ' + r.contactName.split(/\s+/)[0] + ',' : 'Hoi,';
@@ -183,6 +237,17 @@ function loginMessage(r, isNewCode) {
 }
 function viewCreated() {
   const r = A.created;
+  if (!r.code) {
+    const title = r.isNewCode ? (r.invite ? 'Nieuwe uitnodiging voor ' : 'Wachtwoordlink voor ') : 'Klaar: ';
+    return '<section class="card adm-done"><div class="item-top"><h2 style="margin:0">' + title + esc(r.orgName) + '</h2><button class="btn small ghost" data-act="created-close">Sluiten</button></div>' +
+      (r.mailed
+        ? '<div class="alert ok"><span>Mail gestuurd naar <strong>' + esc(r.ownerEmail) + '</strong>. ' + (r.isNewCode ? 'De eigenaar kiest via de link een nieuw wachtwoord.' : 'De eigenaar kiest via de link een wachtwoord en kan dan meteen beginnen.') + '</span></div>'
+        : '<div class="alert warn"><span>De mail is niet verstuurd' + (r.mailError ? ': ' + esc(r.mailError) : '.') + ' Stuur de link hieronder zelf door. Hij is maar één keer te gebruiken.</span></div>' +
+          '<div class="field"><label for="msg">Bericht om te versturen</label><textarea class="input" id="msg" rows="10" readonly>' + esc(inviteMessage(r)) + '</textarea></div>' +
+          '<div class="row"><button class="btn primary" data-act="copy-msg">Bericht kopiëren</button>' +
+            '<a class="btn" href="mailto:' + esc(r.ownerEmail) + '?subject=' + encodeURIComponent('Je CrewHarbor-account') + '&body=' + encodeURIComponent(inviteMessage(r)) + '">Openen in e-mail</a></div>') +
+      '<dl class="kv"><dt>Bedrijfscode</dt><dd>' + esc(r.slug) + '</dd><dt>Eigenaar</dt><dd>' + esc(r.ownerName) + ' · ' + esc(r.ownerEmail) + '</dd></dl></section>';
+  }
   return '<section class="card adm-done"><div class="item-top"><h2 style="margin:0">' + (r.isNewCode ? 'Nieuwe code voor ' : 'Klaar: ') + esc(r.orgName) + '</h2>' +
       '<button class="btn small ghost" data-act="created-close">Sluiten</button></div>' +
     '<div class="alert warn"><span>Deze code zie je maar één keer. Stuur hem nu door; daarna is hij niet meer op te vragen (wel een nieuwe te maken).</span></div>' +
@@ -229,11 +294,15 @@ function viewOrgs() {
             '<div class="field"><label for="d-c">Typ <strong>' + esc(o.slug) + '</strong> om te bevestigen</label><input class="input" id="d-c" name="confirm" autocomplete="off" autocapitalize="none" spellcheck="false"></div>' +
             '<div class="row"><button class="btn danger" type="submit"' + (A.busy ? ' disabled' : '') + '>' + (A.busy ? 'Bezig met verwijderen…' : 'Definitief verwijderen') + '</button><button class="btn ghost" type="button" data-act="del-cancel">Annuleren</button></div></form>';
         } else if (A.codeFor === o.id) {
-          x += '<div class="box"><p style="margin:0">De eigenaar (<strong>' + esc(o.owner || '–') + '</strong>) krijgt een nieuwe code. De oude code werkt dan niet meer.</p>' +
-            '<div class="row"><button class="btn dark" data-act="owner-code-go" data-id="' + o.id + '"' + (A.busy ? ' disabled' : '') + '>Nieuwe code maken</button><button class="btn ghost" data-act="owner-code-cancel">Annuleren</button></div></div>';
+          x += '<div class="box"><p style="margin:0">De eigenaar (<strong>' + esc(o.owner || '–') + '</strong>) krijgt een mail met een link om een (nieuw) wachtwoord te kiezen. Heeft de eigenaar nog geen e-mailadres, dan maak je een nieuwe code zoals vroeger.</p>' +
+            '<div class="row"><button class="btn dark" data-act="owner-code-go" data-id="' + o.id + '"' + (A.busy ? ' disabled' : '') + '>Link sturen</button><button class="btn ghost" data-act="owner-code-cancel">Annuleren</button></div></div>';
+        } else if (A.mfaResetFor === o.id) {
+          x += '<div class="box"><p style="margin:0">Telefoon kwijt? Hiermee zet je de tweestapsverificatie van de eigenaar (<strong>' + esc(o.owner || '–') + '</strong>) uit. Doe dit alleen als je zeker weet dat de eigenaar het zelf vraagt, bijvoorbeeld na een telefoontje.</p>' +
+            '<div class="row"><button class="btn danger" data-act="mfa-reset-go" data-id="' + o.id + '">Tweestapsverificatie resetten</button><button class="btn ghost" data-act="mfa-reset-cancel">Annuleren</button></div></div>';
         } else {
           x += '<div class="row"><button class="btn" data-act="org-edit" data-id="' + o.id + '">Gegevens wijzigen</button>' +
-            '<button class="btn" data-act="owner-code" data-id="' + o.id + '">Nieuwe code eigenaar</button>' +
+            '<button class="btn" data-act="owner-code" data-id="' + o.id + '">Inloglink eigenaar</button>' +
+            '<button class="btn" data-act="mfa-reset" data-id="' + o.id + '">2FA eigenaar resetten</button>' +
             (o.blocked ? '<button class="btn green" data-act="unblock" data-id="' + o.id + '">Vrijgeven</button>' : '<button class="btn danger" data-act="block" data-id="' + o.id + '">Blokkeren</button>') +
             '<button class="btn ghost adm-del" data-act="del" data-id="' + o.id + '">Verwijderen</button></div>';
         }
@@ -265,6 +334,7 @@ function viewLog() {
 function render() {
   if (!A.ready) { $app.innerHTML = ''; return; }
   document.title = 'CrewHarbor Beheer';
+  if (A.mfa) { $app.innerHTML = viewMfa(); return; }
   if (!A.data) { $app.innerHTML = A.screen === 'setup' ? viewSetup() : viewLogin(); return; }
   const y = window.scrollY;
   $app.innerHTML = viewPanel();
@@ -283,14 +353,23 @@ $app.addEventListener('click', async e => {
       case 'to-setup': A.screen = 'setup'; A.err = null; render(); break;
       case 'to-login': A.screen = 'login'; A.err = null; render(); break;
       case 'logout': await logout(); break;
-      case 'tab': A.tab = id; A.orgSel = null; A.editOrg = null; A.blockFor = null; A.codeFor = null; A.delFor = null; render(); break;
+      case 'tab':
+        A.tab = id; A.orgSel = null; A.editOrg = null; A.blockFor = null; A.codeFor = null; A.delFor = null; A.mfaResetFor = null; render();
+        if (id === 'mail') { A.mail = await svc('admin-mail-get'); render(); }
+        break;
+      case 'mfa-reset': A.mfaResetFor = id; A.codeFor = null; render(); break;
+      case 'mfa-reset-cancel': A.mfaResetFor = null; render(); break;
+      case 'mfa-reset-go': {
+        const r = await svc('admin-owner-mfa-reset', { orgId: id });
+        A.mfaResetFor = null; render(); toast(r.removed ? 'Tweestapsverificatie van ' + r.name + ' is gereset.' : r.name + ' had geen tweestapsverificatie aan.'); break;
+      }
       case 'req-filter': A.reqFilter = id; render(); break;
       case 'new-org':
-        A.create = { requestId: null, orgName: '', slug: '', ownerName: '', contactName: '', contactEmail: '', contactPhone: '' }; A.created = null; render();
+        A.create = { requestId: null, orgName: '', slug: '', ownerName: '', ownerEmail: '', contactName: '', contactEmail: '', contactPhone: '' }; A.created = null; render();
         window.scrollTo(0, 0); document.getElementById('c-org').focus(); break;
       case 'req-create': {
         const r = req();
-        A.create = { requestId: r.id, orgName: r.company, slug: slugify(r.company), ownerName: r.contactName, contactName: r.contactName, contactEmail: r.email, contactPhone: r.phone || '' };
+        A.create = { requestId: r.id, orgName: r.company, slug: slugify(r.company), ownerName: r.contactName, ownerEmail: r.email, contactName: r.contactName, contactEmail: r.email, contactPhone: r.phone || '' };
         A.created = null; render(); window.scrollTo(0, 0); document.getElementById('c-slug').focus(); break;
       }
       case 'create-cancel': A.create = null; render(); break;
@@ -303,7 +382,7 @@ $app.addEventListener('click', async e => {
       case 'reject': A.rejectFor = Number(id); render(); document.getElementById('rj-' + id).focus(); break;
       case 'reject-cancel': A.rejectFor = null; render(); break;
       case 'req-delete': await rpc('cd_admin_request_delete', { p_id: Number(id) }); await refresh(); toast('Aanvraag verwijderd.'); break;
-      case 'org-open': A.orgSel = A.orgSel === id ? null : id; A.editOrg = null; A.blockFor = null; A.codeFor = null; A.delFor = null; render(); break;
+      case 'org-open': A.orgSel = A.orgSel === id ? null : id; A.editOrg = null; A.blockFor = null; A.codeFor = null; A.delFor = null; A.mfaResetFor = null; render(); break;
       case 'org-edit': A.editOrg = id; render(); break;
       case 'org-edit-cancel': A.editOrg = null; render(); break;
       case 'block': A.blockFor = id; render(); document.getElementById('b-r').focus(); break;
@@ -318,7 +397,7 @@ $app.addEventListener('click', async e => {
         try {
           const o = A.data.orgs.find(x => x.id === id);
           const r = await svc('admin-owner-code', { orgId: id });
-          A.created = { isNewCode: true, orgName: r.orgName, slug: r.slug, ownerName: r.ownerName, code: r.code, contactName: o && o.contactName, contactEmail: o && o.contactEmail };
+          A.created = Object.assign({ isNewCode: true, contactName: o && o.contactName, contactEmail: o && o.contactEmail }, r);
           A.codeFor = null; A.create = null;
         } finally { A.busy = false; }
         await refresh(); window.scrollTo(0, 0); break;
@@ -353,12 +432,28 @@ $app.addEventListener('submit', async e => {
         : await svc('admin-setup', { setupCode: v('setupCode'), name: v('name'), password: f.elements.password.value });
       if (!d.session) throw new Error('Inloggen mislukt. Probeer het opnieuw.');
       await sb.auth.setSession(d.session);
-      A.err = null; await load(); render();
-      if (kind === 'setup') toast('Welkom! Je beheerdersaccount staat klaar.');
+      A.err = null;
+      if (await enter()) { render(); if (kind === 'setup') toast('Welkom! Je beheerdersaccount staat klaar.'); }
       return;
     }
+    if (kind === 'mfa') {
+      const M = A.mfa; M.busy = true; M.err = null; render();
+      try { await window.CHMFA.verify(M.mode === 'setup' ? M.factorId : null, f.elements.code.value); }
+      catch (x) { M.busy = false; M.err = x.message; try { await rpc('cd_mfa_log', { p_event: '2fa-fout' }); } catch (y) { /* */ } render(); const c = document.getElementById('mfa-code'); if (c) c.focus(); return; }
+      try { await rpc('cd_mfa_log', { p_event: M.mode === 'setup' ? '2fa-aangezet' : '2fa-bevestigd' }); } catch (y) { /* */ }
+      const wasSetup = M.mode === 'setup';
+      if (await enter()) { render(); if (wasSetup) toast('Tweestapsverificatie staat aan.'); }
+      return;
+    }
+    if (kind === 'mail') {
+      await svc('admin-mail-save', { host: v('host'), port: Number(v('port')) || 465, user: v('user'), pass: f.elements.pass.value, from: v('from'), fromName: v('fromName'), siteUrl: v('siteUrl') });
+      A.mail = await svc('admin-mail-get'); render(); toast('Mailinstellingen opgeslagen. Stuur een testmail om te kijken of het werkt.'); return;
+    }
+    if (kind === 'mail-test') {
+      await svc('admin-mail-test', { to: v('to') }); toast('Testmail verstuurd naar ' + v('to') + '. Kijk ook in je spammap.'); if (btn) btn.disabled = false; return;
+    }
     if (kind === 'create') {
-      const p = { requestId: A.create.requestId, orgName: v('orgName'), slug: v('slug').toLowerCase(), ownerName: v('ownerName'), contactName: v('contactName'), contactEmail: v('contactEmail'), contactPhone: v('contactPhone') };
+      const p = { requestId: A.create.requestId, orgName: v('orgName'), slug: v('slug').toLowerCase(), ownerName: v('ownerName'), ownerEmail: v('ownerEmail').toLowerCase(), contactName: v('contactName'), contactEmail: v('contactEmail'), contactPhone: v('contactPhone') };
       Object.assign(A.create, p, { err: null }); A.busy = true; render();
       try {
         const r = await svc('admin-create-org', p);
@@ -395,7 +490,8 @@ $app.addEventListener('submit', async e => {
       A.addAdmin = false; await refresh(); toast('Beheerder toegevoegd.'); return;
     }
   } catch (err) {
-    if (kind === 'login' || kind === 'setup') {
+    if (kind === 'mfa') { A.mfa.busy = false; A.mfa.err = err.message; render(); }
+    else if (kind === 'login' || kind === 'setup') {
       A.err = err.message;
       const keep = {}; [...f.elements].forEach(el => { if (el.id && el.type !== 'password') keep[el.id] = el.value; });
       render(); Object.keys(keep).forEach(k => { const el = document.getElementById(k); if (el) el.value = keep[k]; });
@@ -408,7 +504,8 @@ $app.addEventListener('submit', async e => {
 (async function start() {
   try {
     const { data: { session } } = await sb.auth.getSession();
-    if (session) { try { await load(); } catch (e) { A.data = null; } }
+    A.ready = true;
+    if (session) { try { await enter(); } catch (e) { A.data = null; } }
   } catch (e) { /* */ }
   A.ready = true; render();
   setInterval(() => { if (A.data && !document.hidden && !A.create && !A.editOrg && !A.blockFor && !A.rejectFor && !A.addAdmin && !A.delFor && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || '')) refresh(); }, 60000);

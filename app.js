@@ -8,6 +8,7 @@ const CFG = window.CREWDECK_CONFIG || {};
 const sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, {
   auth: { storageKey: 'crewdeck-auth', persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
 });
+window.CHMFA.use(sb);
 const $app = document.getElementById('app');
 
 const PERM_GROUPS = [
@@ -118,7 +119,7 @@ async function rpc(name, args) {
     if (error.code === '28000' || error.code === 'PGRST301' || /JWT expired|invalid JWT/i.test(error.message)) {
       await loggedOut('Je sessie is verlopen of je account is gedeactiveerd. Log opnieuw in.');
     }
-    throw new Error(cleanErr(error.message));
+    const err = new Error(cleanErr(error.message)); err.code = error.code; throw err;
   }
   return data;
 }
@@ -140,7 +141,8 @@ async function svc(action, body) {
 async function loggedOut(msg) {
   try { await sb.auth.signOut({ scope: 'local' }); } catch (e) { /* */ }
   S.me = null; S.seen = null; S.perms = new Set(); S.authError = msg || null;
-  if (!['login', 'registreren'].includes(route())) location.hash = '#/login';
+  S.mfa = null;
+  if (!AC_PUBLIC.includes(route())) location.hash = '#/login';
   render();
 }
 async function loadSession() {
@@ -232,10 +234,10 @@ function updateTitle() {
 
 // ---------- routes ----------
 const ROUTES = ['overzicht', 'terugbellen', 'verzoek', 'taken', 'taak', 'uren', 'rooster', 'goedkeuren', 'urenoverzicht', 'prikklok', 'klok', 'verlof', 'beschikbaar', 'meldingen', 'kennisbank', 'documenten',
-  'team', 'cijfers', 'telefonie', 'logboek', 'mensen', 'rollen', 'instellingen', 'login', 'registreren'];
+  'team', 'cijfers', 'telefonie', 'logboek', 'mensen', 'rollen', 'instellingen', 'login', 'registreren', 'vergeten', 'wachtwoord', 'email'];
 const ROUTE_PERM = { team: 'team.board', cijfers: 'reports.view', telefonie: 'phone.view', logboek: 'audit.view', instellingen: null, goedkeuren: 'hours.approve', urenoverzicht: 'hours.view_all', prikklok: 'hours.kiosk',
   mensen: ['members.manage', 'roles.manage'], rollen: ['members.manage', 'roles.manage'] };
-function route() { const h = location.hash.replace(/^#\/?/, ''); return ROUTES.includes(h) ? h : (S.me ? 'overzicht' : (kioskToken() ? 'klok' : 'login')); }
+function route() { const h = location.hash.replace(/^#\/?/, '').split('?')[0]; return ROUTES.includes(h) ? h : (S.me ? 'overzicht' : (kioskToken() ? 'klok' : 'login')); }
 function go(r) { if (location.hash === '#/' + r) onRoute(); else location.hash = '#/' + r; }
 window.addEventListener('hashchange', onRoute);
 function allowed(r) {
@@ -247,12 +249,13 @@ function allowed(r) {
 async function onRoute() {
   const r = route();
   if (r === 'klok') { await loadKiosk(); render(); return; }
+  if (r === 'wachtwoord' || r === 'email') { await loadToken(); render(); return; }
   if (!S.me) {
-    if (r === 'registreren' && !S.regInfo) { try { S.regInfo = await svc('register-info'); } catch (e) { S.regInfo = { open: false }; } }
-    if (r !== 'login' && r !== 'registreren') { location.hash = '#/login'; return; }
+    if ((r === 'registreren' || r === 'login') && !S.regInfo) { try { S.regInfo = await svc('register-info'); } catch (e) { S.regInfo = { open: false }; } }
+    if (!AC_PUBLIC.includes(r)) { location.hash = '#/login'; return; }
     render(); return;
   }
-  if (r === 'login' || r === 'registreren') { go('overzicht'); return; }
+  if (AC_PUBLIC.includes(r)) { go('overzicht'); return; }
   if (APP && typeof loadMobile === 'function') { try { await loadMobile(); } catch (e) { toast(e.message, true); } render(); return; }
   if (!allowed(r)) { go('overzicht'); return; }
   if (r === 'uren' && !S.hKeep) { S.hMember = null; }
@@ -305,6 +308,7 @@ async function loadRoute() {
   if (r === 'goedkeuren') jobs.push(rpc('cd_hours_pending').then(d => { S.pending = d; }));
   if (r === 'urenoverzicht') jobs.push(loadReport());
   if (r === 'telefonie') jobs.push(loadPhone());
+  if (r === 'instellingen') jobs.push(loadSecurity());
   if (r === 'instellingen' && can('org.manage')) jobs.push(rpc('cd_phone_status').then(d => { S.phStatus = d; }).catch(() => { S.phStatus = null; }));
   if (r === 'prikklok') jobs.push(rpc('cd_kiosks').then(d => { S.kiosks = d; }));
   if (r === 'verlof') jobs.push(loadAbsences());
@@ -363,9 +367,11 @@ function render() {
   const r = route();
   if (APP && APP.keepAwake) { try { APP.keepAwake(r === 'klok'); } catch (e) { /* */ } }
   if (r === 'klok') { document.title = 'Prikklok · CrewHarbor'; $app.innerHTML = viewKiosk(); return; }
+  if (S.mfa) { document.title = 'Tweestapsverificatie · CrewHarbor'; $app.innerHTML = viewMfa(); return; }
+  if (r === 'wachtwoord' || r === 'email') { document.title = 'CrewHarbor'; $app.innerHTML = viewToken(); return; }
   if (!S.me) {
     document.title = 'CrewHarbor';
-    $app.innerHTML = r === 'registreren' ? viewRegister() : viewLogin();
+    $app.innerHTML = r === 'registreren' ? viewRegister() : r === 'vergeten' ? viewForgot() : S.legacyLogin ? viewLogin() : viewLoginEmail();
     return;
   }
   if (APP && typeof viewMobile === 'function') { $app.innerHTML = viewMobile(); updateTitle(); return; }
@@ -394,15 +400,15 @@ function brandPanel(title, sub) {
 }
 function viewLogin() {
   const last = (() => { try { return localStorage.getItem('crewdeck-company') || ''; } catch (e) { return ''; } })();
-  return '<div class="login">' + brandPanel('Al het werk van je team. Eén dek.', 'Inloggen met je bedrijfscode, naam en persoonlijke code.') +
+  return '<div class="login">' + brandPanel('De vaste haven voor je team.', 'Inloggen met je bedrijfscode, naam en persoonlijke code.') +
     '<section class="login-main"><form class="login-card" data-form="login" novalidate>' +
-      '<div><h2>Inloggen</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Je bedrijfscode en code krijg je van je beheerder.</p></div>' +
+      '<div><h2>Inloggen met een code</h2><p class="muted" style="margin:6px 0 0;font-size:14px">De oude manier. Na het inloggen koppel je bij Instellingen je e-mailadres.</p></div>' +
       (S.authError ? '<div class="alert error" role="alert">' + ICON.alert + '<span>' + esc(S.authError) + '</span></div>' : '') +
       '<div class="field"><label for="l-company">Bedrijfscode</label><input class="input" id="l-company" name="company" autocomplete="organization" autocapitalize="none" spellcheck="false" value="' + esc(last) + '" required></div>' +
       '<div class="field"><label for="l-name">Naam</label><input class="input" id="l-name" name="name" autocomplete="username" required></div>' +
       '<div class="field"><label for="l-code">Code</label><input class="input code-input" id="l-code" name="code" type="password" inputmode="numeric" autocomplete="current-password" required></div>' +
       '<button class="btn primary" type="submit" id="l-submit">Inloggen</button>' +
-      '<p class="switch">Nieuw bij CrewHarbor? <a href="#/registreren">' + (S.regInfo && S.regInfo.request === false ? 'Registreer je bedrijf' : 'Vraag CrewHarbor aan') + '</a></p>' +
+      '<p class="switch"><button type="button" class="linkbtn" data-act="ac-back">Inloggen met e-mailadres</button></p>' +
     '</form></section></div>';
 }
 function viewRegister() {
@@ -411,11 +417,11 @@ function viewRegister() {
   if (info.request) {
     if (S.requestSent) {
       form = '<div class="login-card" style="max-width:460px"><h2>Aanvraag ontvangen</h2>' +
-        '<div class="alert info"><span>Bedankt! We nemen je aanvraag zo snel mogelijk in behandeling. Je krijgt van ons je <strong>bedrijfscode</strong> en de inloggegevens van de eigenaar op <strong>' + esc(S.requestSent) + '</strong>.</span></div>' +
+        '<div class="alert info"><span>Bedankt! We nemen je aanvraag zo snel mogelijk in behandeling. Zodra je bedrijf klaarstaat, krijg je op <strong>' + esc(S.requestSent) + '</strong> een mail om je wachtwoord te kiezen.</span></div>' +
         '<p class="switch"><a href="#/login">Terug naar inloggen</a></p></div>';
     } else {
       form = '<form class="login-card" data-form="request" novalidate style="max-width:460px">' +
-        '<div><h2>CrewHarbor aanvragen</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Wij zetten je bedrijf klaar en sturen je de bedrijfscode en de inloggegevens van de eigenaar.</p></div>' +
+        '<div><h2>CrewHarbor aanvragen</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Wij zetten je bedrijf klaar. Daarna krijg je een mail om je wachtwoord te kiezen.</p></div>' +
         (S.authError ? '<div class="alert error" role="alert">' + ICON.alert + '<span>' + esc(S.authError) + '</span></div>' : '') +
         '<div class="field"><label for="q-company">Bedrijfsnaam</label><input class="input" id="q-company" name="company" autocomplete="organization" required></div>' +
         '<div class="field"><label for="q-name">Jouw naam</label><input class="input" id="q-name" name="contactName" autocomplete="name" required></div>' +
@@ -439,10 +445,11 @@ function viewRegister() {
       (S.authError ? '<div class="alert error" role="alert">' + ICON.alert + '<span>' + esc(S.authError) + '</span></div>' : '') +
       '<div class="field"><label for="r-org">Bedrijfsnaam</label><input class="input" id="r-org" name="orgName" autocomplete="organization" required></div>' +
       '<div class="field"><label for="r-slug">Bedrijfscode</label><input class="input" id="r-slug" name="slug" autocapitalize="none" spellcheck="false" pattern="[a-z0-9][a-z0-9-]{2,29}" required aria-describedby="r-slug-h">' +
-        '<span class="small muted" id="r-slug-h">Hiermee logt je team in. 3 tot 30 tekens: kleine letters, cijfers en -</span></div>' +
+        '<span class="small muted" id="r-slug-h">Een korte naam voor je bedrijf. 3 tot 30 tekens: kleine letters, cijfers en -</span></div>' +
       '<div class="field"><label for="r-name">Jouw naam</label><input class="input" id="r-name" name="ownerName" autocomplete="name" required></div>' +
-      '<div class="field"><label for="r-code">Kies een code</label><input class="input code-input" id="r-code" name="code" type="password" inputmode="numeric" autocomplete="new-password" required aria-describedby="r-code-h">' +
-        '<span class="small muted" id="r-code-h">6 tot 12 cijfers. Bewaar hem goed.</span></div>' +
+      '<div class="field"><label for="r-email">E-mailadres</label><input class="input" id="r-email" name="email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>' +
+      '<div class="field"><label for="r-pass">Kies een wachtwoord</label><input class="input" id="r-pass" name="password" type="password" autocomplete="new-password" required aria-describedby="r-pass-h">' +
+        '<span class="small muted" id="r-pass-h">Minstens 10 tekens.</span></div>' +
       '<div class="honeypot" aria-hidden="true"><label for="r-web">Website</label><input id="r-web" name="website" tabindex="-1" autocomplete="off"></div>' +
       '<button class="btn primary" type="submit" id="r-submit">' + (info.firstSetup ? 'Inrichten' : 'Bedrijf aanmaken') + '</button>' +
       '<p class="switch">Al een account? <a href="#/login">Inloggen</a></p></form>';
@@ -895,8 +902,8 @@ function codeAlert() {
 }
 function viewMembers() {
   const mm = can('members.manage');
-  let h = '<header class="page-head"><div><h1>Mensen</h1><p>Iedereen logt in met de bedrijfscode <strong>' + esc(S.org.slug) + '</strong>, zijn naam en een persoonlijke code.</p></div>' +
-    (mm ? '<div class="actions"><button class="btn primary" data-act="m-new">' + ICON.plus + 'Medewerker toevoegen</button></div>' : '') + '</header>' + codeAlert();
+  let h = '<header class="page-head"><div><h1>Mensen</h1><p>Iedereen logt in met zijn eigen e-mailadres en wachtwoord. Nieuwe mensen krijgen een uitnodiging per mail.</p></div>' +
+    (mm ? '<div class="actions"><button class="btn primary" data-act="m-new">' + ICON.plus + 'Medewerker toevoegen</button></div>' : '') + '</header>' + codeAlert() + linkAlert();
   const actief = S.members.filter(u => !u.archived), archief = S.members.filter(u => u.archived);
   if (S.mTab === 'archief' && !archief.length) S.mTab = 'actief';
   h += '<div class="seg" role="tablist" aria-label="Medewerkers">' + [['actief', 'In dienst', actief.length], ['archief', 'Archief', archief.length]].map(t =>
@@ -917,7 +924,7 @@ function viewMembers() {
         cell('<span style="display:inline-flex;gap:8px;align-items:center;font-weight:600">' + (u.isOwner ? ICON.lock : '') + esc(u.name) + (same(u.id, S.me.id) ? ' <span class="small muted">(jij)</span>' : '') + '</span>') +
         cell(u.isOwner ? '<span class="badge dark">Eigenaar</span>' : esc(u.roleName)) +
         cell('<span class="small">' + esc(contractShort(u)) + '</span>') +
-        cell(u.leaving ? leaveBadge(u) : u.active ? '<span class="small" style="color:var(--green)">Actief</span>' : '<span class="small muted">Gedeactiveerd</span>') +
+        cell(u.leaving ? leaveBadge(u) : !u.active ? '<span class="small muted">Gedeactiveerd</span>' : memberStatus(u) || '<span class="small" style="color:var(--green)">Actief</span>') +
         cell('<span class="small muted">' + (u.lastLogin ? esc(fmtDate(u.lastLogin)) : 'Nog nooit') + '</span>') + '</tr>';
     }).join('') + '</tbody></table></div></div><aside class="detail card">' + viewMemberPanel() + '</aside></div>';
   return h;
@@ -937,10 +944,11 @@ function viewMemberPanel() {
     const first = (S.roles.roles.find(r => r.name === 'Medewerker' && r.canAssign) || S.roles.roles.find(r => !r.isOwner && r.canAssign) || {}).id;
     const sel = S.mNewRole || first;
     return '<div class="stack" style="gap:16px"><div><span class="small muted">Nieuwe medewerker</span><h2 style="margin:0;font-size:22px">Medewerker toevoegen</h2></div>' +
-      '<div class="field"><label for="m-name">Naam *</label><input class="input" id="m-name" placeholder="Bijv. Lisa of Lisa de Jong" autocomplete="off"><span class="small muted">Hiermee logt diegene in. Moet uniek zijn binnen je bedrijf.</span></div>' +
+      '<div class="field"><label for="m-name">Naam *</label><input class="input" id="m-name" placeholder="Bijv. Lisa de Jong" autocomplete="off"><span class="small muted">Moet uniek zijn binnen je bedrijf.</span></div>' +
+      '<div class="field"><label for="m-email">E-mailadres *</label><input class="input" id="m-email" type="email" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="lisa@bedrijf.nl"><span class="small muted">Hier komt de uitnodiging naartoe. Hiermee logt diegene ook in.</span></div>' +
       '<div class="field"><label for="m-role">Rol</label><select class="input" id="m-role" data-act-change="m-role-new">' + roleOptions(sel) + '</select>' + permSummary(sel) + '</div>' +
-      '<div class="detail-section"><button class="btn dark" data-act="m-create">Aanmaken en code maken</button><button class="btn ghost" data-act="m-cancel">Annuleren</button></div>' +
-      '<p class="small muted" style="margin:0">CrewHarbor maakt een persoonlijke code van 6 cijfers. Die zie je één keer.</p></div>';
+      '<div class="detail-section"><button class="btn dark" data-act="m-create">Aanmaken en uitnodigen</button><button class="btn ghost" data-act="m-cancel">Annuleren</button></div>' +
+      '<p class="small muted" style="margin:0">Diegene krijgt een mail met een link om een wachtwoord te kiezen. De link werkt 7 dagen.</p></div>';
   }
   const u = S.members.find(x => same(x.id, S.mSel) && !x.archived);
   if (!u) return '<p class="muted" style="margin:0">Kies iemand in de lijst om de gegevens te bekijken of aan te passen.</p>';
@@ -968,9 +976,8 @@ function viewMemberPanel() {
       '<label class="check"><input type="checkbox" id="m-active"' + (u.active ? ' checked' : '') + '> Account actief (kan inloggen)</label>') +
     (!self || S.me.isOwner ? contractFields(u) : '<dl class="kv"><dt>Contract</dt><dd>' + esc(contractText(u)) + '</dd></dl>') +
     '<div class="detail-section"><button class="btn dark" data-act="m-save" data-id="' + u.id + '">Opslaan</button>' +
-    (self ? '' : '<button class="btn" data-act="m-reset" data-id="' + u.id + '">Nieuwe code maken</button>') +
     (self || !can('members.manage') || u.leaving ? '' : '<button class="btn danger" data-act="m-off-open" data-id="' + u.id + '">Uit dienst melden</button>') + '</div>' +
-    (self ? '<p class="small muted" style="margin:0">Je eigen code wijzig je bij Instellingen.</p>' : '') + '</div>';
+    (self ? '<p class="small muted" style="margin:0">Je e-mailadres, wachtwoord en tweestapsverificatie regel je bij Instellingen.</p>' : memberAccess(u)) + '</div>';
 }
 
 // ----- rollen -----
@@ -1017,12 +1024,9 @@ function viewRolePanel() {
 // ----- instellingen -----
 function viewSettings() {
   const s = settings();
-  let h = '<header class="page-head"><div><h1>Instellingen</h1><p>Je eigen account' + (can('org.manage') ? ' en de instellingen van ' + esc(S.org.name) : '') + '.</p></div></header>' + codeAlert();
+  let h = '<header class="page-head"><div><h1>Instellingen</h1><p>Je eigen account' + (can('org.manage') ? ' en de instellingen van ' + esc(S.org.name) : '') + '.</p></div></header>' + codeAlert() + linkAlert();
   h += '<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">';
-  h += '<section class="card stack" style="gap:14px"><h2>Mijn account</h2><dl class="kv"><dt>Naam</dt><dd>' + esc(S.me.name) + '</dd><dt>Rol</dt><dd>' + esc(S.roleName) + '</dd><dt>Bedrijfscode</dt><dd>' + esc(S.org.slug) + '</dd></dl>' +
-    '<div class="field"><label for="s-code">Nieuwe code</label><input class="input code-input" id="s-code" type="password" inputmode="numeric" autocomplete="new-password" placeholder="6 tot 12 cijfers"></div>' +
-    '<div class="field"><label for="s-code2">Herhaal nieuwe code</label><input class="input code-input" id="s-code2" type="password" inputmode="numeric" autocomplete="new-password"></div>' +
-    '<div><button class="btn dark" data-act="s-owncode">Code wijzigen</button></div></section>';
+  h += accountCard();
   if (can('org.manage')) {
     const tz = s.timezone || 'Europe/Amsterdam';
     h += '<section class="card stack" style="gap:14px"><h2>Bedrijf</h2>' +
@@ -1034,7 +1038,7 @@ function viewSettings() {
       '<div><button class="btn primary" data-act="o-save">Opslaan</button></div></section>';
     h += viewPhoneLink();
   }
-  return h + '</div>';
+  return h + securityCards() + '</div>';
 }
 
 // ======================================================================
@@ -1674,10 +1678,14 @@ function viewKiosk() {
   let body;
   if (K.exit) {
     const X = K.exit;
-    body = '<form class="kiosk-exit" data-form="kiosk-exit" novalidate><h1>Prikklok verlaten</h1><p>Log in met je eigen naam en code. Alleen mensen met het recht "Prikklok verlaten" kunnen dit.</p>' +
+    body = '<form class="kiosk-exit" data-form="kiosk-exit" novalidate><h1>Prikklok verlaten</h1><p>Log in met ' + (X.legacy ? 'je naam en code' : 'je e-mailadres en wachtwoord') + '. Alleen mensen met het recht "Prikklok verlaten" kunnen dit.</p>' +
       (X.err ? '<p class="kiosk-err" role="alert">' + esc(X.err) + '</p>' : '') +
-      '<div class="field"><label for="kx-name">Naam</label><input class="input" id="kx-name" name="name" autocomplete="off" value="' + esc(X.name || '') + '"></div>' +
-      '<div class="field"><label for="kx-code">Code</label><input class="input code-input" id="kx-code" name="code" type="password" inputmode="numeric" autocomplete="off"></div>' +
+      (X.legacy
+        ? '<div class="field"><label for="kx-name">Naam</label><input class="input" id="kx-name" name="name" autocomplete="off" value="' + esc(X.name || '') + '"></div>' +
+          '<div class="field"><label for="kx-code">Code</label><input class="input code-input" id="kx-code" name="code" type="password" inputmode="numeric" autocomplete="off"></div>'
+        : '<div class="field"><label for="kx-name">E-mailadres</label><input class="input" id="kx-name" name="name" type="email" autocapitalize="none" spellcheck="false" autocomplete="off" value="' + esc(X.name || '') + '"></div>' +
+          '<div class="field"><label for="kx-code">Wachtwoord</label><input class="input" id="kx-code" name="code" type="password" autocomplete="off"></div>') +
+      '<button type="button" class="linkbtn" data-act="k-exit-mode">' + (X.legacy ? 'Inloggen met e-mailadres' : 'Ik log nog in met een code') + '</button>' +
       '<label class="check"><input type="checkbox" name="revoke"' + (X.revoke ? ' checked' : '') + '> Prikklok op dit apparaat helemaal uitzetten</label>' +
       '<div class="form-foot"><button type="button" class="btn ghost" data-act="k-exit-cancel">Annuleren</button><button type="submit" class="btn primary"' + (X.busy ? ' disabled' : '') + '>' + (X.busy ? 'Bezig…' : 'Inloggen') + '</button></div></form>';
   } else if (K.error === 'none' || K.error === 'revoked') {
@@ -1696,7 +1704,7 @@ function viewKiosk() {
     const goingIn = !P || !P.in;
     body = '<div class="kiosk-pad"><button class="btn ghost" data-act="k-cancel">' + ICON.left + 'Terug</button>' +
       '<div class="kiosk-who">' + avatar(P.id, P.name, 'xl') + '<div><h1>' + esc(P.name) + '</h1><p>' + (goingIn ? 'Inklokken' + (P.shift ? ' · ingepland ' + esc(P.shift) : '') : 'Uitklokken · binnen sinds ' + esc(P.in)) + '</p></div></div>' +
-      '<label class="kiosk-label" id="k-lab">Voer je code in, of de klokcode uit de CrewHarbor-app</label>' +
+      '<label class="kiosk-label" id="k-lab">Voer je pincode in, of de klokcode uit de CrewHarbor-app</label>' +
       '<div class="kiosk-dots' + (K.err ? ' bad' : '') + '" aria-labelledby="k-lab" aria-live="polite">' + (K.code ? K.code.split('').map(() => '<span></span>').join('') : '<em>••••••</em>') + '</div>' +
       (K.err ? '<p class="kiosk-err" role="alert">' + esc(K.err) + '</p>' : '') +
       '<div class="keypad">' + ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'].map(k =>
@@ -2025,18 +2033,18 @@ $app.addEventListener('submit', async e => {
   if (!f) return;
   e.preventDefault(); unlockAudio();
   if (f.dataset.form === 'kiosk-exit') {
-    const name = f.elements.name.value.trim(), code = f.elements.code.value.trim(), revoke = f.elements.revoke.checked;
-    K.exit = { name, revoke, busy: true }; render();
+    const legacy = !!(K.exit && K.exit.legacy);
+    const name = f.elements.name.value.trim(), code = f.elements.code.value, revoke = f.elements.revoke.checked;
+    K.exit = { name, revoke, legacy, busy: true }; render();
     try {
-      const d = await svc('kiosk-exit', { token: kioskToken(), name, code, revoke });
+      const d = await svc('kiosk-exit', legacy ? { token: kioskToken(), name, code: code.trim(), revoke } : { token: kioskToken(), email: name.toLowerCase(), password: code, revoke });
       await sb.auth.setSession(d.session);
       if (d.revoked) { try { localStorage.removeItem('crewdeck-kiosk'); } catch (err) { /* */ } }
       clearTimeout(kioskTimer); K.exit = null; K.info = null;
-      await loadSession(); S.authError = null; S.seen = null;
-      location.hash = '#/overzicht'; await onRoute();
+      if (!(await enterApp())) return;
       toast(d.revoked ? 'Prikklok uitgezet. Je bent ingelogd.' : 'Je bent ingelogd. De prikklok open je weer via Uren → Prikklok.');
     } catch (err) {
-      K.exit = { name, revoke, err: err.message }; render();
+      K.exit = { name, revoke, legacy, err: err.message }; render();
       const c = document.getElementById('kx-code'); if (c) c.focus();
     }
     return;
@@ -2058,14 +2066,13 @@ $app.addEventListener('submit', async e => {
       return;
     } else {
       const v = k => (f.elements[k] ? f.elements[k].value.trim() : '');
-      const d = await svc('register', { orgName: v('orgName'), slug: v('slug').toLowerCase(), ownerName: v('ownerName'), code: v('code'), website: v('website') });
+      const pr = window.CHMFA.passwordProblem(f.elements.password.value, v('email')); if (pr) throw new Error(pr);
+      const d = await svc('register', { orgName: v('orgName'), slug: v('slug').toLowerCase(), ownerName: v('ownerName'), email: v('email').toLowerCase(), password: f.elements.password.value, website: v('website') });
       if (d.session) await sb.auth.setSession(d.session);
-      try { localStorage.setItem('crewdeck-company', d.slug); } catch (err) { /* */ }
+      try { localStorage.setItem('crewharbor-email', v('email').toLowerCase()); } catch (err) { /* */ }
       toast('Welkom bij CrewHarbor! Je bedrijf staat klaar.');
     }
-    await loadSession();
-    S.authError = null; S.seen = null;
-    location.hash = '#/overzicht'; await onRoute();
+    await enterApp();
   } catch (err) {
     S.authError = err.message;
     const vals = {}; [...f.elements].forEach(el => { if (el.id && el.type !== 'password') vals[el.id] = el.value; });
@@ -2215,6 +2222,7 @@ $app.addEventListener('click', async e => {
       case 'notif-allow': await Notification.requestPermission(); render(); return;
       case 'go-pool': S.cbTab = 'pool'; return;
       case 'hidecode': S.shownCode = null; render(); return;
+      case 'k-exit-mode': K.exit = Object.assign({}, K.exit, { legacy: !(K.exit && K.exit.legacy), err: null, name: '' }); render(); return;
       case 'nav-group': {
         if (el.dataset.locked) return;
         const g = el.closest('.nav-group'); const open = g.classList.toggle('open');
@@ -2594,11 +2602,13 @@ $app.addEventListener('click', async e => {
       case 'm-cancel': S.mNew = false; render(); return;
       case 'm-create': {
         const name = document.getElementById('m-name').value.trim();
+        const email = document.getElementById('m-email').value.trim().toLowerCase();
         const roleId = document.getElementById('m-role').value;
         if (name.length < 2) { toast('Vul een naam in van minstens 2 tekens.', true); return; }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { toast('Vul een geldig e-mailadres in.', true); return; }
         el.disabled = true;
-        const d = await svc('member-create', { name, roleId });
-        S.shownCode = { name: d.member.name, code: d.code }; S.mNew = false; S.mSel = d.member.id;
+        const d = await svc('member-create', { name, roleId, email });
+        deliveryResult(d, d.member.name, email, false); S.mNew = false; S.mSel = d.member.id;
         await loadPeople(); render(); window.scrollTo(0, 0); return;
       }
       case 'm-save': {
@@ -2694,6 +2704,10 @@ setInterval(() => {
   try {
     const { data: { session } } = await sb.auth.getSession();
     if (session) await loadSession();
-  } catch (e) { S.me = null; try { await sb.auth.signOut({ scope: 'local' }); } catch (err) { /* */ } }
+  } catch (e) {
+    S.me = null;
+    if ((e.code === 'CH001' || e.code === 'CH002') && !['wachtwoord', 'email'].includes(route())) { await enterApp(); return; }
+    try { await sb.auth.signOut({ scope: 'local' }); } catch (err) { /* */ }
+  }
   await onRoute();
 })();
